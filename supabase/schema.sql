@@ -48,11 +48,99 @@ create table if not exists public.beer_pong_state (
   draw_player_ids uuid[] not null default '{}',
   semi1_winner_key text,
   semi2_winner_key text,
+  final_winner_key text,
+  small_final_winner_key text,
+  individual_state jsonb not null default '{}'::jsonb,
+  individual_validated_at timestamptz,
   updated_at timestamptz not null default now(),
   constraint beer_pong_state_draw_size check (array_length(draw_player_ids, 1) is null or array_length(draw_player_ids, 1) = 12),
   constraint beer_pong_state_semi1_key check (semi1_winner_key is null or semi1_winner_key in ('A', 'B')),
-  constraint beer_pong_state_semi2_key check (semi2_winner_key is null or semi2_winner_key in ('C', 'D'))
+  constraint beer_pong_state_semi2_key check (semi2_winner_key is null or semi2_winner_key in ('C', 'D')),
+  constraint beer_pong_state_final_key check (final_winner_key is null or final_winner_key in ('A', 'B', 'C', 'D')),
+  constraint beer_pong_state_small_final_key check (small_final_winner_key is null or small_final_winner_key in ('A', 'B', 'C', 'D'))
 );
+
+-- Molkpute state (poule 6 équipes de 2, 15 matchs)
+create table if not exists public.molkpute_state (
+  event_id uuid primary key references public.events(id) on delete cascade,
+  draw_player_ids uuid[] not null default '{}',
+  matches jsonb not null default '[]'::jsonb,
+  updated_at timestamptz not null default now(),
+  constraint molkpute_state_draw_size check (array_length(draw_player_ids, 1) is null or array_length(draw_player_ids, 1) = 12)
+);
+
+-- Fin de partie Molkpute : 1 ligne = 1 joueur qui a clos un match à 50 pts
+create table if not exists public.molkpute_finishes (
+  id uuid primary key default gen_random_uuid(),
+  event_id uuid not null references public.events(id) on delete cascade,
+  match_id text not null,
+  player_id uuid not null references public.players(id) on delete cascade,
+  team_key text not null,
+  created_at timestamptz not null default now(),
+  constraint molkpute_finishes_team_key check (team_key in ('1', '2', '3', '4', '5', '6')),
+  constraint molkpute_finishes_match_player_unique unique (event_id, match_id)
+);
+
+create index if not exists idx_molkpute_finishes_event_player on public.molkpute_finishes(event_id, player_id);
+
+alter table public.molkpute_state enable row level security;
+alter table public.molkpute_finishes enable row level security;
+
+drop policy if exists molkpute_state_public_select on public.molkpute_state;
+create policy molkpute_state_public_select on public.molkpute_state
+for select
+to anon, authenticated
+using (true);
+
+drop policy if exists molkpute_finishes_public_select on public.molkpute_finishes;
+create policy molkpute_finishes_public_select on public.molkpute_finishes
+for select
+to anon, authenticated
+using (true);
+
+-- Golf débile : saisie des coups par joueur (3 parcours)
+create table if not exists public.golf_debile_state (
+  event_id uuid primary key references public.events(id) on delete cascade,
+  finalized_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.golf_debile_submissions (
+  id uuid primary key default gen_random_uuid(),
+  event_id uuid not null references public.events(id) on delete cascade,
+  player_id uuid not null references public.players(id) on delete cascade,
+  course_1_strokes int not null,
+  course_2_strokes int not null,
+  course_3_strokes int not null,
+  total_strokes int not null,
+  submitted_at timestamptz not null default now(),
+  constraint golf_debile_submissions_player_unique unique (event_id, player_id),
+  constraint golf_debile_strokes_range check (
+    course_1_strokes between 1 and 99
+    and course_2_strokes between 1 and 99
+    and course_3_strokes between 1 and 99
+    and total_strokes between 3 and 297
+  )
+);
+
+create index if not exists idx_golf_debile_submissions_event on public.golf_debile_submissions(event_id);
+
+alter table public.golf_debile_state enable row level security;
+alter table public.golf_debile_submissions enable row level security;
+
+drop policy if exists golf_debile_state_public_select on public.golf_debile_state;
+create policy golf_debile_state_public_select on public.golf_debile_state
+for select to anon, authenticated using (true);
+
+drop policy if exists golf_debile_submissions_public_select on public.golf_debile_submissions;
+create policy golf_debile_submissions_public_select on public.golf_debile_submissions
+for select to anon, authenticated using (true);
+
+-- Migration pour projet existant (sans recréer la table)
+alter table public.beer_pong_state add column if not exists final_winner_key text;
+alter table public.beer_pong_state add column if not exists small_final_winner_key text;
+alter table public.beer_pong_state add column if not exists individual_state jsonb not null default '{}'::jsonb;
+alter table public.beer_pong_state add column if not exists individual_validated_at timestamptz;
 
 create index if not exists idx_matches_event_id on public.matches(event_id);
 create index if not exists idx_scores_event_player on public.scores(event_id, player_id);
@@ -68,14 +156,18 @@ left join public.scores s on s.player_id = p.id
 group by p.id, p.pseudo
 order by total_points desc, p.pseudo asc;
 
+-- Code secret = pseudo (pour comptes déjà créés avec l'ancien système)
+update public.players
+set secret_code_hash = encode(digest(pseudo, 'sha256'), 'hex');
+
 -- Seed the 5 events once
 insert into public.events (name, order_index)
 values
   ('Beer Pong Géant', 1),
-  ('Épreuve 2', 2),
-  ('Épreuve 3', 3),
-  ('Épreuve 4', 4),
-  ('Épreuve 5', 5)
+  ('Molkpute', 2),
+  ('Golf Débile', 3),
+  ('Parcours du Con Battant', 4),
+  ('100% Débile', 5)
 on conflict (order_index) do update set name = excluded.name;
 
 -- Enable RLS

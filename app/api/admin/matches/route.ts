@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/admin-guard";
 import { createMatch, updateMatchWinner } from "@/lib/data";
+import { readFormText } from "@/lib/form-fields";
 import { redirectTo } from "@/lib/http";
 
 export async function POST(request: NextRequest) {
@@ -11,8 +12,8 @@ export async function POST(request: NextRequest) {
 
     if (action === "updateWinner") {
       const matchId = String(formData.get("matchId") ?? "");
-      const winnerIdRaw = String(formData.get("winnerId") ?? "");
-      const winnerId = winnerIdRaw.trim() === "" ? null : winnerIdRaw;
+      const winnerIdRaw = readFormText(formData, "winnerId");
+      const winnerId = winnerIdRaw === "" ? null : winnerIdRaw;
       await updateMatchWinner(matchId, winnerId);
       return redirectTo(request.url, "/admin", "Gagnant mis à jour.", false);
     }

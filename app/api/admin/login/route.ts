@@ -1,7 +1,10 @@
 import { NextRequest } from "next/server";
+import {
+  applyAdminSessionCookies,
+  createAdminSessionToken
+} from "@/lib/auth";
 import { env } from "@/lib/env";
 import { redirectTo } from "@/lib/http";
-import { setAdminSession } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
   const formData = await request.formData();
@@ -10,6 +13,8 @@ export async function POST(request: NextRequest) {
     return redirectTo(request.url, "/admin", "Mot de passe admin invalide.", true);
   }
 
-  await setAdminSession();
-  return redirectTo(request.url, "/admin", "Connexion admin réussie.", false);
+  const token = await createAdminSessionToken();
+  const response = redirectTo(request.url, "/admin", "Connexion admin réussie.", false);
+  applyAdminSessionCookies(response, token);
+  return response;
 }

@@ -1,7 +1,36 @@
-import { generateSecretCode, hashSecretCode } from "@/lib/auth";
+import { buildBeerPongTeamsFromPlayers } from "@/lib/beer-pong";
+import {
+  applyMolkputeFinisher,
+  buildMolkputeTeamsFromPlayers,
+  createRoundRobinMatches,
+  findPlayerTeam,
+  normalizeMolkputeMatches,
+  resetMolkputeMatchState,
+  submitMolkputeTurn,
+  type MolkputeTeamKey
+} from "@/lib/molkpute";
+import {
+  computeGlobalPlayerRanks,
+  computeTeamRankings,
+  emptyIndividualTeamState,
+  getNextPlaceToPick,
+  getTeamPlayerIdsFromDraw,
+  normalizeIndividualState,
+  type IndividualState,
+  type TeamKey
+} from "@/lib/beer-pong-ranking";
+import { hashSecretCode } from "@/lib/auth";
 import { getSupabaseAdminClient, getSupabasePublicClient } from "@/lib/supabase";
+import {
+  computeGolfDebileEventPoints,
+  GOLF_DEBILE_PLAYER_COUNT,
+  parseGolfDebileInput,
+  type GolfDebileSubmission
+} from "@/lib/golf-debile";
 import type {
   BeerPongState,
+  GolfDebileState,
+  MolkputeState,
   EventItem,
   EventRankingRow,
   GlobalRankingRow,
@@ -10,11 +39,14 @@ import type {
   ScoreItem
 } from "@/lib/types";
 
-function sanitizePseudo(input: string) {
+function sanitizePseudo(input: string | null | undefined) {
+  if (typeof input !== "string") {
+    return "";
+  }
   return input.trim().replace(/\s+/g, " ");
 }
 
-export function validatePseudo(pseudo: string) {
+export function validatePseudo(pseudo: string | null | undefined) {
   const clean = sanitizePseudo(pseudo);
   const isValid = /^[a-zA-Z0-9_\- ]{3,20}$/.test(clean);
   if (!isValid) {
@@ -23,10 +55,13 @@ export function validatePseudo(pseudo: string) {
   return clean;
 }
 
+function secretHashForPseudo(pseudo: string) {
+  return hashSecretCode(pseudo);
+}
+
 export async function registerPlayer(pseudoInput: string) {
   const pseudo = validatePseudo(pseudoInput);
-  const secretCode = generateSecretCode();
-  const secretCodeHash = hashSecretCode(secretCode);
+  const secretCodeHash = secretHashForPseudo(pseudo);
   const supabase = getSupabaseAdminClient();
 
   const { data, error } = await supabase
@@ -42,15 +77,12 @@ export async function registerPlayer(pseudoInput: string) {
     throw new Error(error.message);
   }
 
-  return {
-    player: data,
-    secretCode
-  };
+  return { player: data };
 }
 
-export async function loginPlayer(pseudoInput: string, secretCodeInput: string) {
+export async function loginPlayer(pseudoInput: string) {
   const pseudo = validatePseudo(pseudoInput);
-  const secretCodeHash = hashSecretCode(secretCodeInput.trim().toUpperCase());
+  const secretCodeHash = secretHashForPseudo(pseudo);
   const supabase = getSupabaseAdminClient();
 
   const { data, error } = await supabase
@@ -64,7 +96,9 @@ export async function loginPlayer(pseudoInput: string, secretCodeInput: string) 
   }
 
   if (data.secret_code_hash !== secretCodeHash) {
-    throw new Error("Code secret invalide.");
+    throw new Error(
+      "Compte créé avec l'ancien système. Demande à l'organisateur de réinitialiser ton accès ou réinscris-toi si le pseudo est libre."
+    );
   }
 
   return {
@@ -252,11 +286,21 @@ export async function updateMatchWinner(matchId: string, winnerId: string | null
   }
 }
 
+async function clearBeerPongEventScores(eventId: string) {
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase.from("scores").delete().eq("event_id", eventId);
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
 export async function getBeerPongState(eventId: string) {
   const supabase = getSupabasePublicClient();
   const { data, error } = await supabase
     .from("beer_pong_state")
-    .select("event_id,draw_player_ids,semi1_winner_key,semi2_winner_key")
+    .select(
+      "event_id,draw_player_ids,semi1_winner_key,semi2_winner_key,final_winner_key,small_final_winner_key,individual_state,individual_validated_at"
+    )
     .eq("event_id", eventId)
     .maybeSingle<BeerPongState>();
 
@@ -264,7 +308,14 @@ export async function getBeerPongState(eventId: string) {
     throw new Error(error.message);
   }
 
-  return data;
+  if (!data) {
+    return null;
+  }
+
+  return {
+    ...data,
+    individual_state: normalizeIndividualState(data.individual_state)
+  };
 }
 
 export async function saveBeerPongDraw(eventId: string, drawPlayerIds: string[]) {
@@ -272,13 +323,20 @@ export async function saveBeerPongDraw(eventId: string, drawPlayerIds: string[])
     throw new Error("Le tirage Beer Pong doit contenir exactement 12 joueurs.");
   }
 
+  await clearBeerPongEventScores(eventId);
+
   const supabase = getSupabaseAdminClient();
   const { error } = await supabase.from("beer_pong_state").upsert(
     {
       event_id: eventId,
       draw_player_ids: drawPlayerIds,
       semi1_winner_key: null,
-      semi2_winner_key: null
+      semi2_winner_key: null,
+      final_winner_key: null,
+      small_final_winner_key: null,
+      individual_state: {},
+      individual_validated_at: null,
+      updated_at: new Date().toISOString()
     },
     { onConflict: "event_id" }
   );
@@ -300,7 +358,6 @@ export async function updateBeerPongWinner(
     throw new Error("Le gagnant de demi-finale 2 doit être C ou D.");
   }
 
-  const column = semi === "semi1" ? "semi1_winner_key" : "semi2_winner_key";
   const currentState = await getBeerPongState(eventId);
   if (!currentState || currentState.draw_player_ids.length !== 12) {
     throw new Error("Lance d'abord le tirage aléatoire pour créer les équipes.");
@@ -313,7 +370,10 @@ export async function updateBeerPongWinner(
       draw_player_ids: currentState.draw_player_ids,
       semi1_winner_key: semi === "semi1" ? winnerKey : currentState.semi1_winner_key,
       semi2_winner_key: semi === "semi2" ? winnerKey : currentState.semi2_winner_key,
-      [column]: winnerKey
+      final_winner_key: null,
+      small_final_winner_key: null,
+      individual_state: {},
+      individual_validated_at: null
     },
     { onConflict: "event_id" }
   );
@@ -321,4 +381,573 @@ export async function updateBeerPongWinner(
   if (error) {
     throw new Error(error.message);
   }
+  await clearBeerPongEventScores(eventId);
+}
+
+export async function updateBeerPongFinalWinner(
+  eventId: string,
+  phase: "final" | "small",
+  winnerKey: "A" | "B" | "C" | "D"
+) {
+  const currentState = await getBeerPongState(eventId);
+  if (!currentState || currentState.draw_player_ids.length !== 12) {
+    throw new Error("Lance d'abord le tirage aléatoire pour créer les équipes.");
+  }
+  if (!currentState.semi1_winner_key || !currentState.semi2_winner_key) {
+    throw new Error("Choisis d'abord les gagnants des demi-finales.");
+  }
+
+  const semi1Loser = currentState.semi1_winner_key === "A" ? "B" : "A";
+  const semi2Loser = currentState.semi2_winner_key === "C" ? "D" : "C";
+
+  if (phase === "final") {
+    const allowed = [currentState.semi1_winner_key, currentState.semi2_winner_key];
+    if (!allowed.includes(winnerKey)) {
+      throw new Error("Le gagnant de la finale doit être un finaliste.");
+    }
+  } else {
+    const allowed = [semi1Loser, semi2Loser];
+    if (!allowed.includes(winnerKey)) {
+      throw new Error("Le gagnant de la petite finale doit être un perdant de demi-finale.");
+    }
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase.from("beer_pong_state").upsert(
+    {
+      event_id: eventId,
+      draw_player_ids: currentState.draw_player_ids,
+      semi1_winner_key: currentState.semi1_winner_key,
+      semi2_winner_key: currentState.semi2_winner_key,
+      final_winner_key: phase === "final" ? winnerKey : currentState.final_winner_key,
+      small_final_winner_key: phase === "small" ? winnerKey : currentState.small_final_winner_key,
+      individual_state: {},
+      individual_validated_at: null
+    },
+    { onConflict: "event_id" }
+  );
+
+  if (error) {
+    throw new Error(error.message);
+  }
+  await clearBeerPongEventScores(eventId);
+}
+
+export async function updateBeerPongIndividualPlace(
+  eventId: string,
+  teamKey: TeamKey,
+  place: 1 | 2 | 3,
+  playerId: string
+) {
+  const currentState = await getBeerPongState(eventId);
+  if (!currentState?.final_winner_key || !currentState.small_final_winner_key) {
+    throw new Error("Choisis d'abord les gagnants de la finale et de la petite finale.");
+  }
+  if (currentState.draw_player_ids.length !== 12) {
+    throw new Error("Tirage incomplet.");
+  }
+  if (currentState.individual_validated_at) {
+    throw new Error("Le classement individuel est validé. Réinitialise-le pour modifier.");
+  }
+
+  const teamPlayerIds = getTeamPlayerIdsFromDraw(currentState.draw_player_ids, teamKey);
+  if (!teamPlayerIds.includes(playerId)) {
+    throw new Error("Ce joueur n'appartient pas à cette équipe.");
+  }
+
+  const individualState: IndividualState = { ...(currentState.individual_state ?? {}) };
+  const teamState = individualState[teamKey] ?? emptyIndividualTeamState();
+  const expectedPlace = getNextPlaceToPick(teamState);
+
+  if (expectedPlace === null) {
+    throw new Error("Le classement de cette équipe est déjà complet.");
+  }
+  if (place !== expectedPlace) {
+    throw new Error(`Choisis d'abord la ${expectedPlace}e place de l'équipe.`);
+  }
+  if (
+    playerId === teamState.firstPlaceId ||
+    playerId === teamState.secondPlaceId ||
+    playerId === teamState.thirdPlaceId
+  ) {
+    throw new Error("Ce joueur est déjà classé dans cette équipe.");
+  }
+
+  if (place === 1) {
+    teamState.firstPlaceId = playerId;
+    teamState.secondPlaceId = null;
+    teamState.thirdPlaceId = null;
+  } else if (place === 2) {
+    teamState.secondPlaceId = playerId;
+    teamState.thirdPlaceId = null;
+  } else {
+    teamState.thirdPlaceId = playerId;
+  }
+
+  individualState[teamKey] = teamState;
+
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase
+    .from("beer_pong_state")
+    .update({ individual_state: individualState })
+    .eq("event_id", eventId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function resetBeerPongIndividual(eventId: string, teamKey?: TeamKey) {
+  const currentState = await getBeerPongState(eventId);
+  if (!currentState) {
+    throw new Error("État Beer Pong introuvable.");
+  }
+
+  const individualState: IndividualState = { ...(currentState.individual_state ?? {}) };
+  if (teamKey) {
+    delete individualState[teamKey];
+  } else {
+    for (const key of Object.keys(individualState) as TeamKey[]) {
+      delete individualState[key];
+    }
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase
+    .from("beer_pong_state")
+    .update({
+      individual_state: individualState,
+      individual_validated_at: null
+    })
+    .eq("event_id", eventId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (currentState.individual_validated_at) {
+    await clearBeerPongEventScores(eventId);
+  }
+}
+
+export async function validateBeerPongIndividual(eventId: string) {
+  const currentState = await getBeerPongState(eventId);
+  if (!currentState?.final_winner_key || !currentState.small_final_winner_key) {
+    throw new Error("Choisis d'abord les gagnants de la finale et de la petite finale.");
+  }
+  if (currentState.draw_player_ids.length !== 12) {
+    throw new Error("Tirage incomplet.");
+  }
+
+  const players = await getPlayers();
+  const playersById = new Map(players.map((player) => [player.id, player]));
+  const selectedPlayers = currentState.draw_player_ids
+    .map((id) => playersById.get(id))
+    .filter((player): player is Player => Boolean(player));
+
+  if (selectedPlayers.length !== 12) {
+    throw new Error("Impossible de retrouver les 12 joueurs du tirage.");
+  }
+
+  const teams = buildBeerPongTeamsFromPlayers(selectedPlayers);
+  const teamRankRows = computeTeamRankings(
+    currentState.semi1_winner_key,
+    currentState.semi2_winner_key,
+    currentState.final_winner_key,
+    currentState.small_final_winner_key
+  );
+  const globalRanks = computeGlobalPlayerRanks(
+    teams,
+    teamRankRows,
+    currentState.individual_state ?? {}
+  );
+
+  if (!globalRanks || globalRanks.length !== 12) {
+    throw new Error("Termine le classement individuel des 4 équipes avant de valider.");
+  }
+
+  await clearBeerPongEventScores(eventId);
+  for (const row of globalRanks) {
+    await addScore(eventId, row.playerId, row.points);
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase
+    .from("beer_pong_state")
+    .update({ individual_validated_at: new Date().toISOString() })
+    .eq("event_id", eventId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function getMolkputeState(eventId: string) {
+  const supabase = getSupabasePublicClient();
+  const { data, error } = await supabase
+    .from("molkpute_state")
+    .select("event_id,draw_player_ids,matches")
+    .eq("event_id", eventId)
+    .maybeSingle<MolkputeState>();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return {
+    ...data,
+    matches: normalizeMolkputeMatches(data.matches)
+  };
+}
+
+export async function saveMolkputeDraw(eventId: string, drawPlayerIds: string[]) {
+  if (drawPlayerIds.length !== 12) {
+    throw new Error("Le tirage Molkpute doit contenir exactement 12 joueurs.");
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase.from("molkpute_state").upsert(
+    {
+      event_id: eventId,
+      draw_player_ids: drawPlayerIds,
+      matches: createRoundRobinMatches(),
+      updated_at: new Date().toISOString()
+    },
+    { onConflict: "event_id" }
+  );
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const supabaseFinishes = getSupabaseAdminClient();
+  await supabaseFinishes.from("molkpute_finishes").delete().eq("event_id", eventId);
+}
+
+async function loadMolkputeTeamsForEvent(eventId: string) {
+  const state = await getMolkputeState(eventId);
+  if (!state || state.draw_player_ids.length !== 12) {
+    throw new Error("Lance d'abord le tirage pour créer les équipes.");
+  }
+
+  const players = await getPlayers();
+  const playersById = new Map(players.map((player) => [player.id, player]));
+  const selectedPlayers = state.draw_player_ids
+    .map((id) => playersById.get(id))
+    .filter((player): player is Player => Boolean(player));
+
+  if (selectedPlayers.length !== 12) {
+    throw new Error("Tirage incomplet ou joueurs introuvables.");
+  }
+
+  return { state, teams: buildMolkputeTeamsFromPlayers(selectedPlayers) };
+}
+
+async function saveMolkputeMatches(eventId: string, drawPlayerIds: string[], matches: unknown) {
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase.from("molkpute_state").upsert(
+    {
+      event_id: eventId,
+      draw_player_ids: drawPlayerIds,
+      matches,
+      updated_at: new Date().toISOString()
+    },
+    { onConflict: "event_id" }
+  );
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function getMolkputeFinishCounts(eventId: string): Promise<Record<string, number>> {
+  const supabase = getSupabasePublicClient();
+  const { data, error } = await supabase
+    .from("molkpute_finishes")
+    .select("player_id")
+    .eq("event_id", eventId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const counts: Record<string, number> = {};
+  for (const row of data ?? []) {
+    counts[row.player_id] = (counts[row.player_id] ?? 0) + 1;
+  }
+  return counts;
+}
+
+export async function submitMolkputeTurnPoints(
+  eventId: string,
+  actorPlayerId: string | null,
+  teamKey: MolkputeTeamKey | null,
+  matchId: string,
+  points: number
+) {
+  const { state, teams } = await loadMolkputeTeamsForEvent(eventId);
+  let scoringTeamKey = teamKey;
+
+  if (actorPlayerId) {
+    const playerTeam = findPlayerTeam(teams, actorPlayerId);
+    if (!playerTeam) {
+      throw new Error("Tu ne fais pas partie du tirage Molkpute.");
+    }
+    if (scoringTeamKey && scoringTeamKey !== playerTeam) {
+      throw new Error("Tu ne peux jouer que pour ton équipe.");
+    }
+    scoringTeamKey = playerTeam;
+  } else if (!scoringTeamKey) {
+    throw new Error("Équipe requise.");
+  }
+
+  const matches = normalizeMolkputeMatches(state.matches);
+  const matchIndex = matches.findIndex((match) => match.id === matchId);
+  if (matchIndex < 0) {
+    throw new Error("Match introuvable.");
+  }
+
+  const result = submitMolkputeTurn(matches[matchIndex], scoringTeamKey, points);
+  const nextMatches = [...matches];
+  nextMatches[matchIndex] = result.match;
+  await saveMolkputeMatches(eventId, state.draw_player_ids, nextMatches);
+
+  return result;
+}
+
+export async function setMolkputeMatchFinisher(
+  eventId: string,
+  actorPlayerId: string | null,
+  teamKey: MolkputeTeamKey | null,
+  matchId: string,
+  finisherPlayerId: string
+) {
+  const { state, teams } = await loadMolkputeTeamsForEvent(eventId);
+  let pickingTeamKey = teamKey;
+
+  if (actorPlayerId) {
+    const playerTeam = findPlayerTeam(teams, actorPlayerId);
+    if (!playerTeam) {
+      throw new Error("Tu ne fais pas partie du tirage Molkpute.");
+    }
+    if (pickingTeamKey && pickingTeamKey !== playerTeam) {
+      throw new Error("Seule l'équipe à 50 points peut désigner le finisseur.");
+    }
+    pickingTeamKey = playerTeam;
+  } else if (!pickingTeamKey) {
+    throw new Error("Équipe requise.");
+  }
+
+  const team = teams.find((entry) => entry.key === pickingTeamKey);
+  if (!team) {
+    throw new Error("Équipe introuvable.");
+  }
+
+  const matches = normalizeMolkputeMatches(state.matches);
+  const matchIndex = matches.findIndex((match) => match.id === matchId);
+  if (matchIndex < 0) {
+    throw new Error("Match introuvable.");
+  }
+
+  const updatedMatch = applyMolkputeFinisher(
+    matches[matchIndex],
+    pickingTeamKey,
+    finisherPlayerId,
+    [...team.playerIds]
+  );
+
+  const nextMatches = [...matches];
+  nextMatches[matchIndex] = updatedMatch;
+  await saveMolkputeMatches(eventId, state.draw_player_ids, nextMatches);
+
+  const supabase = getSupabaseAdminClient();
+  const { error: finishError } = await supabase.from("molkpute_finishes").upsert(
+    {
+      event_id: eventId,
+      match_id: matchId,
+      player_id: finisherPlayerId,
+      team_key: pickingTeamKey
+    },
+    { onConflict: "event_id,match_id" }
+  );
+
+  if (finishError) {
+    throw new Error(finishError.message);
+  }
+}
+
+export async function resetMolkputeMatch(eventId: string, matchId: string) {
+  const state = await getMolkputeState(eventId);
+  if (!state) {
+    throw new Error("Aucun état Molkpute.");
+  }
+
+  const matches = normalizeMolkputeMatches(state.matches);
+  const matchIndex = matches.findIndex((match) => match.id === matchId);
+  if (matchIndex < 0) {
+    throw new Error("Match introuvable.");
+  }
+
+  const nextMatches = [...matches];
+  nextMatches[matchIndex] = resetMolkputeMatchState(matches[matchIndex]);
+  await saveMolkputeMatches(eventId, state.draw_player_ids, nextMatches);
+
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase
+    .from("molkpute_finishes")
+    .delete()
+    .eq("event_id", eventId)
+    .eq("match_id", matchId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+async function clearGolfDebileEventScores(eventId: string) {
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase.from("scores").delete().eq("event_id", eventId);
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function getGolfDebileState(eventId: string) {
+  const supabase = getSupabasePublicClient();
+  const { data, error } = await supabase
+    .from("golf_debile_state")
+    .select("event_id,finalized_at")
+    .eq("event_id", eventId)
+    .maybeSingle<GolfDebileState>();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+  return data;
+}
+
+async function ensureGolfDebileState(eventId: string) {
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase.from("golf_debile_state").upsert(
+    { event_id: eventId, finalized_at: null },
+    { onConflict: "event_id" }
+  );
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function getGolfDebileSubmissions(eventId: string): Promise<GolfDebileSubmission[]> {
+  const supabase = getSupabasePublicClient();
+  const [submissionsResult, players] = await Promise.all([
+    supabase
+      .from("golf_debile_submissions")
+      .select(
+        "player_id,course_1_strokes,course_2_strokes,course_3_strokes,total_strokes,submitted_at"
+      )
+      .eq("event_id", eventId),
+    getPlayers()
+  ]);
+
+  if (submissionsResult.error) {
+    throw new Error(submissionsResult.error.message);
+  }
+
+  const pseudoById = new Map(players.map((player) => [player.id, player.pseudo]));
+
+  return (submissionsResult.data ?? []).map((row) => ({
+    playerId: row.player_id,
+    pseudo: pseudoById.get(row.player_id) ?? "?",
+    course1: row.course_1_strokes,
+    course2: row.course_2_strokes,
+    course3: row.course_3_strokes,
+    totalStrokes: row.total_strokes,
+    submittedAt: row.submitted_at
+  }));
+}
+
+export async function submitGolfDebileScore(
+  eventId: string,
+  playerId: string,
+  input: { course1: number; course2: number; course3: number }
+) {
+  const state = await getGolfDebileState(eventId);
+  if (state?.finalized_at) {
+    throw new Error("Le Golf Débile est terminé : les points sont figés.");
+  }
+
+  const parsed = parseGolfDebileInput(input);
+  const total = parsed.course1 + parsed.course2 + parsed.course3;
+
+  const existing = await getGolfDebileSubmissions(eventId);
+  if (existing.some((entry) => entry.playerId === playerId)) {
+    throw new Error("Tu as déjà envoyé tes résultats.");
+  }
+
+  await ensureGolfDebileState(eventId);
+
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase.from("golf_debile_submissions").insert({
+    event_id: eventId,
+    player_id: playerId,
+    course_1_strokes: parsed.course1,
+    course_2_strokes: parsed.course2,
+    course_3_strokes: parsed.course3,
+    total_strokes: total
+  });
+
+  if (error) {
+    if (error.code === "23505") {
+      throw new Error("Tu as déjà envoyé tes résultats.");
+    }
+    throw new Error(error.message);
+  }
+
+  const submissions = await getGolfDebileSubmissions(eventId);
+  if (submissions.length >= GOLF_DEBILE_PLAYER_COUNT) {
+    await finalizeGolfDebileRanking(eventId);
+  }
+}
+
+export async function finalizeGolfDebileRanking(eventId: string) {
+  const submissions = await getGolfDebileSubmissions(eventId);
+  if (submissions.length < GOLF_DEBILE_PLAYER_COUNT) {
+    throw new Error(
+      `Il manque ${GOLF_DEBILE_PLAYER_COUNT - submissions.length} joueur(s) avant de calculer le classement.`
+    );
+  }
+
+  const pointsByPlayer = computeGolfDebileEventPoints(submissions);
+  await clearGolfDebileEventScores(eventId);
+
+  for (const [playerId, points] of pointsByPlayer.entries()) {
+    await addScore(eventId, playerId, points);
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase.from("golf_debile_state").upsert(
+    {
+      event_id: eventId,
+      finalized_at: new Date().toISOString()
+    },
+    { onConflict: "event_id" }
+  );
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function resetGolfDebile(eventId: string) {
+  const supabase = getSupabaseAdminClient();
+  await supabase.from("golf_debile_submissions").delete().eq("event_id", eventId);
+  await supabase.from("golf_debile_state").upsert(
+    { event_id: eventId, finalized_at: null },
+    { onConflict: "event_id" }
+  );
+  await clearGolfDebileEventScores(eventId);
 }

@@ -1,25 +1,27 @@
 import { notFound } from "next/navigation";
 import { BeerPongBracket } from "@/components/beer-pong-bracket";
 import { MatchTable } from "@/components/match-table";
+import { GolfDebileBoard } from "@/components/golf-debile-board";
+import { MolkputePool } from "@/components/molkpute-pool";
 import { RankingTable } from "@/components/ranking-table";
-import { getAdminSession } from "@/lib/auth";
+import { getPlayerSession } from "@/lib/auth";
+import { loadBeerPongView } from "@/lib/beer-pong-page";
+import { loadGolfDebileView } from "@/lib/golf-debile-page";
 import {
-  buildBeerPongPlaceholderTeams,
-  buildBeerPongTeamsFromPlayers
-} from "@/lib/beer-pong";
-import {
-  getBeerPongState,
   getEventByOrder,
   getEventMatches,
-  getEventRanking,
-  getPlayers
+  getEventRanking
 } from "@/lib/data";
 import { getEventDisplayName } from "@/lib/event-labels";
+import { findPlayerTeam } from "@/lib/molkpute";
+import { loadMolkputeView } from "@/lib/molkpute-page";
 
 type Props = {
   params: Promise<{ order: string }>;
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
+
+export const dynamic = "force-dynamic";
 
 export default async function EpreuvePage({ params, searchParams }: Props) {
   const { order } = await params;
@@ -34,43 +36,41 @@ export default async function EpreuvePage({ params, searchParams }: Props) {
     notFound();
   }
 
-  const [matches, ranking, adminSession] = await Promise.all([
+  const [matches, ranking] = await Promise.all([
     getEventMatches(eventItem.id),
-    getEventRanking(eventItem.id),
-    getAdminSession()
+    getEventRanking(eventItem.id)
   ]);
   const displayName = getEventDisplayName(eventItem.order_index, eventItem.name);
   const isBeerPong = eventItem.order_index === 1;
+  const isMolkpute = eventItem.order_index === 2;
+  const isGolfDebile = eventItem.order_index === 3;
   const success = typeof paramsQuery.success === "string" ? paramsQuery.success : undefined;
   const error = typeof paramsQuery.error === "string" ? paramsQuery.error : undefined;
 
-  let teams = buildBeerPongPlaceholderTeams();
-  let hasRandomDraw = false;
-  let semi1WinnerKey: "A" | "B" | null = null;
-  let semi2WinnerKey: "C" | "D" | null = null;
-  if (isBeerPong) {
-    const beerPongState = await getBeerPongState(eventItem.id);
-    const drawIds = beerPongState?.draw_player_ids ?? [];
-    if (drawIds.length === 12) {
-      const players = await getPlayers();
-      const playersById = new Map(players.map((player) => [player.id, player]));
-      const selectedPlayers = drawIds
-        .map((id) => playersById.get(id))
-        .filter((player): player is NonNullable<typeof player> => Boolean(player));
-      if (selectedPlayers.length === 12) {
-        teams = buildBeerPongTeamsFromPlayers(selectedPlayers);
-        hasRandomDraw = true;
-        semi1WinnerKey = beerPongState?.semi1_winner_key ?? null;
-        semi2WinnerKey = beerPongState?.semi2_winner_key ?? null;
-      }
-    }
-  }
+  const needsPlayerSession = isMolkpute || isGolfDebile;
+
+  const [beerPongView, molkputeView, playerSession] = await Promise.all([
+    isBeerPong ? loadBeerPongView(eventItem.id) : Promise.resolve(null),
+    isMolkpute ? loadMolkputeView(eventItem.id) : Promise.resolve(null),
+    needsPlayerSession ? getPlayerSession() : Promise.resolve(null)
+  ]);
+
+  const golfDebileView = isGolfDebile
+    ? await loadGolfDebileView(eventItem.id, playerSession?.playerId ?? null)
+    : null;
+
+  const playerTeamKey =
+    molkputeView && playerSession
+      ? findPlayerTeam(molkputeView.teams, playerSession.playerId)
+      : null;
 
   return (
     <main className="grid">
       <section className="card">
         <h1 className="title">
           {isBeerPong ? "🍺 " : ""}
+          {isMolkpute ? "🎯 " : ""}
+          {isGolfDebile ? "⛳ " : ""}
           {displayName}
         </h1>
         <p className="subtitle">Affichage des duels et du classement de l&apos;épreuve.</p>
@@ -78,28 +78,65 @@ export default async function EpreuvePage({ params, searchParams }: Props) {
         {error ? <p className="error">{error}</p> : null}
       </section>
 
-      {isBeerPong ? (
+      {isBeerPong && beerPongView ? (
         <section className="card">
-          <h2>Tableau Beer Pong Géant</h2>
-          {adminSession ? (
-            <form action="/api/admin/beer-pong-draw" method="post" style={{ marginBottom: 14 }}>
-              <button type="submit">Tirage aléatoire des 12 participants</button>
-            </form>
-          ) : (
-            <p className="subtitle">Connecte-toi en admin pour lancer le tirage aléatoire.</p>
-          )}
+          <h2>Beer Pong Géant</h2>
+          <p className="subtitle bracketHint">
+            Mode spectateur — le bracket se met à jour automatiquement.
+          </p>
           <BeerPongBracket
             eventId={eventItem.id}
-            teams={teams}
-            hasRandomDraw={hasRandomDraw}
-            canEdit={Boolean(adminSession)}
-            initialSemi1Winner={semi1WinnerKey}
-            initialSemi2Winner={semi2WinnerKey}
+            teams={beerPongView.teams}
+            hasRandomDraw={beerPongView.hasRandomDraw}
+            canEdit={false}
+            initialSemi1Winner={beerPongView.semi1WinnerKey}
+            initialSemi2Winner={beerPongView.semi2WinnerKey}
+            initialFinalWinner={beerPongView.finalWinnerKey}
+            initialSmallFinalWinner={beerPongView.smallFinalWinnerKey}
+            initialIndividualState={beerPongView.individualState}
+            initialIndividualValidatedAt={beerPongView.individualValidatedAt}
           />
         </section>
       ) : null}
 
-      {!isBeerPong ? (
+      {isMolkpute && molkputeView ? (
+        <section className="card">
+          <h2>Molkpute — poule de 6</h2>
+          <p className="subtitle bracketHint">
+            Tours alternés, saisie des points au lancer. La page se met à jour automatiquement.
+          </p>
+          <MolkputePool
+            eventId={eventItem.id}
+            teams={molkputeView.teams}
+            matches={molkputeView.matches}
+            standings={molkputeView.standings}
+            playerFinishes={molkputeView.playerFinishes}
+            hasDraw={molkputeView.hasDraw}
+            playerTeamKey={playerTeamKey}
+            playerPseudo={playerSession?.pseudo ?? null}
+            spectatorSync
+          />
+        </section>
+      ) : null}
+
+      {isGolfDebile && golfDebileView ? (
+        <section className="card">
+          <h2>Golf Débile</h2>
+          <GolfDebileBoard
+            eventId={eventItem.id}
+            courses={golfDebileView.courses}
+            mySubmission={golfDebileView.mySubmission}
+            submissionCount={golfDebileView.submissionCount}
+            requiredCount={golfDebileView.requiredCount}
+            isFinalized={golfDebileView.isFinalized}
+            leaderboard={golfDebileView.leaderboard}
+            playerPseudo={playerSession?.pseudo ?? null}
+            spectatorSync
+          />
+        </section>
+      ) : null}
+
+      {!isBeerPong && !isMolkpute && !isGolfDebile ? (
         <section className="card">
           <h2>Matchs</h2>
           {matches.length === 0 ? <p className="subtitle">Aucun match planifié.</p> : <MatchTable matches={matches} />}

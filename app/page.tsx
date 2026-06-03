@@ -1,76 +1,100 @@
-import Link from "next/link";
+import { Crown, LogIn, User } from "lucide-react";
+import { NyanCatFlyby } from "@/components/nyan-cat-flyby";
 import { getPlayerSession } from "@/lib/auth";
-import { getEvents } from "@/lib/data";
-import { getEventDisplayName } from "@/lib/event-labels";
 
 type HomeProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
+export const dynamic = "force-dynamic";
+
 export default async function HomePage({ searchParams }: HomeProps) {
-  const [session, events] = await Promise.all([getPlayerSession(), getEvents()]);
+  const session = await getPlayerSession();
   const params = (await searchParams) ?? {};
   const success = typeof params.success === "string" ? params.success : undefined;
   const error = typeof params.error === "string" ? params.error : undefined;
 
   return (
-    <main className="grid" style={{ gap: 20 }}>
-      <section className="card">
-        <h1 className="title">Compétition Anniversaire</h1>
-        <p className="subtitle">
-          Inscris-toi avec un pseudo pour suivre tes matchs, puis consulte le classement en direct.
-        </p>
-        {session ? (
-          <p className="ok">
-            Connecté en tant que <strong>{session.pseudo}</strong>
+    <div className="homePage">
+      <section className="heroSection">
+        <NyanCatFlyby />
+        <div className="heroGlow heroGlowViolet" />
+        <div className="heroGlow heroGlowBlue" />
+        <div className="heroGlow heroGlowPink" />
+        <div className="confettiLayer" aria-hidden="true" />
+
+        <div className="heroContent">
+          <div className="heroCrown" aria-hidden="true">
+            <Crown size={72} strokeWidth={1.6} />
+          </div>
+          <h1 className="heroTitle">
+            ANNIVERSAIRE
+            <span>GAME ON !</span>
+          </h1>
+          <p className="heroSubtitle">
+            Bienvenue dans la compétition la plus débile de l&apos;année.
           </p>
-        ) : (
-          <span className="badge">Pas encore connecté</span>
-        )}
-        {success ? <p className="ok">{success}</p> : null}
-        {error ? <p className="error">{error}</p> : null}
+
+          {session ? (
+            <p className="sessionBadge ok">
+              Connecté : <strong>{session.pseudo}</strong>
+            </p>
+          ) : null}
+          {success ? <p className="flashMessage ok">{success}</p> : null}
+          {error ? <p className="flashMessage error">{error}</p> : null}
+        </div>
       </section>
 
-      <section className="grid two">
-        <article className="card">
-          <h2>Inscription</h2>
-          <p className="subtitle">
-            Tu choisis un pseudo, le site te donne un code secret à conserver pour te reconnecter.
-          </p>
-          <form action="/api/auth/register" method="post" className="grid">
+      <section className="homeCards">
+        <article className="glassCard">
+          <div className="cardHeader cardHeaderBlue">
+            <div className="cardIconWrap cardIconWrapBlue">
+              <User size={22} />
+            </div>
+            <h2>Inscription</h2>
+          </div>
+          <p className="cardHint">Pseudo obligatoire et unique.</p>
+          <form action="/api/auth/register" method="post" className="formStack">
             <input required name="pseudo" placeholder="Ton pseudo" maxLength={20} />
-            <button type="submit">S&apos;inscrire</button>
-          </form>
-        </article>
-
-        <article className="card">
-          <h2>Connexion joueur</h2>
-          <form action="/api/auth/login" method="post" className="grid">
-            <input required name="pseudo" placeholder="Pseudo" maxLength={20} />
-            <input required name="secretCode" placeholder="Code secret" maxLength={20} />
-            <button type="submit">Se connecter</button>
-          </form>
-          <form action="/api/auth/logout" method="post" style={{ marginTop: 10 }}>
-            <button className="secondary" type="submit">
-              Se déconnecter
+            <button type="submit" className="btnBlue">
+              S&apos;inscrire
             </button>
           </form>
         </article>
+
+        <article className="glassCard">
+          <div className="cardHeader cardHeaderViolet">
+            <div className="cardIconWrap cardIconWrapViolet">
+              <LogIn size={22} />
+            </div>
+            <h2>Connexion</h2>
+          </div>
+          <p className="cardHint">Entre ton pseudo pour te reconnecter (c&apos;est aussi ton &quot;code&quot;).</p>
+          {session ? (
+            <form action="/api/auth/logout" method="post">
+              <button type="submit" className="btnGhost">
+                Se déconnecter ({session.pseudo})
+              </button>
+            </form>
+          ) : (
+            <form action="/api/auth/login" method="post" className="formStack">
+              <input required name="pseudo" placeholder="Ton pseudo" maxLength={20} />
+              <button type="submit" className="btnViolet">
+                Se connecter
+              </button>
+            </form>
+          )}
+        </article>
       </section>
 
-      <section className="card">
-        <h2>Épreuves</h2>
-        <div className="row">
-          {events.map((eventItem) => (
-            <Link key={eventItem.id} className="badge" href={`/epreuves/${eventItem.order_index}`}>
-              {getEventDisplayName(eventItem.order_index, eventItem.name)}
-            </Link>
-          ))}
-        </div>
-        <p style={{ marginTop: 14 }}>
-          <Link href="/classement">Voir le classement global</Link>
+      <section className="infoHeroCard glassCard pulseGlow">
+        <p className="infoHeroText">
+          5 défis, <span>1 seul champion.</span>
+        </p>
+        <p className="infoHeroTagline">
+          Affrontes tes potes plus débiles les uns que les autres et grimpe au classement
         </p>
       </section>
-    </main>
+    </div>
   );
 }

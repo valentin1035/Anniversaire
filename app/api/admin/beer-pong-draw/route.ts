@@ -1,3 +1,4 @@
+import { revalidatePath } from "next/cache";
 import { NextRequest } from "next/server";
 import { requireAdmin } from "@/lib/admin-guard";
 import { shuffleArray } from "@/lib/beer-pong";
@@ -11,7 +12,7 @@ export async function POST(request: NextRequest) {
     if (players.length < 12) {
       return redirectTo(
         request.url,
-        "/epreuves/1",
+        "/admin/beer-pong",
         `Il faut au minimum 12 joueurs (actuellement ${players.length}).`,
         true
       );
@@ -27,8 +28,19 @@ export async function POST(request: NextRequest) {
       beerPongEvent.id,
       shuffled.map((player) => player.id)
     );
-    return redirectTo(request.url, "/epreuves/1", "Tirage effectué.", false);
+
+    revalidatePath("/admin/beer-pong");
+    revalidatePath("/epreuves/1");
+    revalidatePath("/classement");
+    revalidatePath("/");
+
+    return redirectTo(
+      request.url,
+      "/admin/beer-pong",
+      "Nouveau tirage effectué — bracket réinitialisé et points Beer Pong retirés du classement.",
+      false
+    );
   } catch (error) {
-    return redirectTo(request.url, "/epreuves/1", (error as Error).message, true);
+    return redirectTo(request.url, "/admin/beer-pong", (error as Error).message, true);
   }
 }

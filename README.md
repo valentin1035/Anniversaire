@@ -1,7 +1,7 @@
 # Site anniversaire - compétition 5 épreuves
 
 Application web responsive avec:
-- inscription sans email (pseudo + code secret),
+- inscription sans email (pseudo unique),
 - classement global,
 - pages par épreuve,
 - panneau admin pour gérer matchs et points.
@@ -54,8 +54,8 @@ Ensuite ouvre [http://localhost:3000](http://localhost:3000).
 
 ## 5) Utilisation rapide
 
-- **Joueur**: inscription avec pseudo -> le site retourne un code secret à conserver.
-- **Connexion**: pseudo + code secret.
+- **Joueur**: inscription avec un pseudo unique.
+- **Connexion**: le pseudo suffit (il sert aussi de « code secret »).
 - **Admin**: `/admin` + `ADMIN_PASSWORD`.
 - **Admin actions**:
   - créer des matchs,

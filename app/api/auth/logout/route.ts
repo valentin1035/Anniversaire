@@ -1,8 +1,9 @@
 import { NextRequest } from "next/server";
-import { clearPlayerSession } from "@/lib/auth";
+import { applyClearPlayerCookies } from "@/lib/auth";
 import { redirectTo } from "@/lib/http";
 
 export async function POST(request: NextRequest) {
-  await clearPlayerSession();
-  return redirectTo(request.url, "/", "Déconnexion réussie.", false);
+  const response = redirectTo(request.url, "/", "Déconnexion réussie.", false);
+  applyClearPlayerCookies(response);
+  return response;
 }

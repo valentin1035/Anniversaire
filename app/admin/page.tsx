@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getAdminSession } from "@/lib/auth";
 import { getAllMatches, getEvents, getPlayers } from "@/lib/data";
 import { getEventDisplayName } from "@/lib/event-labels";
@@ -5,6 +6,8 @@ import { getEventDisplayName } from "@/lib/event-labels";
 type AdminProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
+
+export const dynamic = "force-dynamic";
 
 export default async function AdminPage({ searchParams }: AdminProps) {
   const params = (await searchParams) ?? {};
@@ -45,6 +48,17 @@ export default async function AdminPage({ searchParams }: AdminProps) {
             Se déconnecter
           </button>
         </form>
+        <p style={{ marginTop: 16, display: "flex", flexWrap: "wrap", gap: 12 }}>
+          <Link href="/admin/beer-pong" className="btnPrimary" style={{ display: "inline-block" }}>
+            🍺 Gérer Beer Pong Géant
+          </Link>
+          <Link href="/admin/molkpute" className="btnPrimary" style={{ display: "inline-block" }}>
+            🎯 Gérer Molkpute
+          </Link>
+          <Link href="/admin/golf-debile" className="btnPrimary" style={{ display: "inline-block" }}>
+            ⛳ Gérer Golf Débile
+          </Link>
+        </p>
       </section>
 
       <section className="grid two">

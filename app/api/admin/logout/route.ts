@@ -1,8 +1,18 @@
+import { revalidatePath } from "next/cache";
 import { NextRequest } from "next/server";
-import { clearAdminSession } from "@/lib/auth";
+import { applyClearAllSessionCookies } from "@/lib/session-cookies";
 import { redirectTo } from "@/lib/http";
 
 export async function POST(request: NextRequest) {
-  await clearAdminSession();
-  return redirectTo(request.url, "/admin", "Déconnexion admin réussie.", false);
+  const response = redirectTo(request.url, "/admin", "Déconnexion admin réussie.", false);
+  applyClearAllSessionCookies(response);
+  revalidatePath("/admin");
+  revalidatePath("/admin/beer-pong");
+  revalidatePath("/admin/molkpute");
+  revalidatePath("/epreuves/1");
+  revalidatePath("/epreuves/2");
+  revalidatePath("/epreuves/3");
+  revalidatePath("/admin/golf-debile");
+  revalidatePath("/");
+  return response;
 }
