@@ -53,6 +53,14 @@ export type GolfDebileState = {
   finalized_at: string | null;
 };
 
+export type Debile100State = {
+  event_id: string;
+  questions: unknown;
+  current_question: number;
+  phase: "idle" | "playing" | "revealed";
+  question_started_at: string | null;
+};
+
 export type BeerPongState = {
   event_id: string;
   draw_player_ids: string[];

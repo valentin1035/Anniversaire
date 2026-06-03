@@ -1,12 +1,14 @@
 import { notFound } from "next/navigation";
 import { BeerPongBracket } from "@/components/beer-pong-bracket";
 import { MatchTable } from "@/components/match-table";
+import { Debile100Quiz } from "@/components/debile100-quiz";
 import { GolfDebileBoard } from "@/components/golf-debile-board";
 import { MolkputePool } from "@/components/molkpute-pool";
 import { RankingTable } from "@/components/ranking-table";
 import { getPlayerSession } from "@/lib/auth";
 import { loadBeerPongView } from "@/lib/beer-pong-page";
 import { loadGolfDebileView } from "@/lib/golf-debile-page";
+import { loadDebile100PlayerView } from "@/lib/debile100-page";
 import {
   getEventByOrder,
   getEventMatches,
@@ -44,10 +46,11 @@ export default async function EpreuvePage({ params, searchParams }: Props) {
   const isBeerPong = eventItem.order_index === 1;
   const isMolkpute = eventItem.order_index === 2;
   const isGolfDebile = eventItem.order_index === 3;
+  const isDebile100 = eventItem.order_index === 5;
   const success = typeof paramsQuery.success === "string" ? paramsQuery.success : undefined;
   const error = typeof paramsQuery.error === "string" ? paramsQuery.error : undefined;
 
-  const needsPlayerSession = isMolkpute || isGolfDebile;
+  const needsPlayerSession = isMolkpute || isGolfDebile || isDebile100;
 
   const [beerPongView, molkputeView, playerSession] = await Promise.all([
     isBeerPong ? loadBeerPongView(eventItem.id) : Promise.resolve(null),
@@ -57,6 +60,10 @@ export default async function EpreuvePage({ params, searchParams }: Props) {
 
   const golfDebileView = isGolfDebile
     ? await loadGolfDebileView(eventItem.id, playerSession?.playerId ?? null)
+    : null;
+
+  const debile100View = isDebile100
+    ? await loadDebile100PlayerView(eventItem.id, playerSession?.playerId ?? null)
     : null;
 
   const playerTeamKey =
@@ -71,6 +78,7 @@ export default async function EpreuvePage({ params, searchParams }: Props) {
           {isBeerPong ? "🍺 " : ""}
           {isMolkpute ? "🎯 " : ""}
           {isGolfDebile ? "⛳ " : ""}
+          {isDebile100 ? "😂 " : ""}
           {displayName}
         </h1>
         <p className="subtitle">Affichage des duels et du classement de l&apos;épreuve.</p>
@@ -136,7 +144,14 @@ export default async function EpreuvePage({ params, searchParams }: Props) {
         </section>
       ) : null}
 
-      {!isBeerPong && !isMolkpute && !isGolfDebile ? (
+      {isDebile100 && debile100View ? (
+        <section className="card">
+          <h2>100% Débile — quiz en direct</h2>
+          <Debile100Quiz {...debile100View} playerPseudo={playerSession?.pseudo ?? null} />
+        </section>
+      ) : null}
+
+      {!isBeerPong && !isMolkpute && !isGolfDebile && !isDebile100 ? (
         <section className="card">
           <h2>Matchs</h2>
           {matches.length === 0 ? <p className="subtitle">Aucun match planifié.</p> : <MatchTable matches={matches} />}

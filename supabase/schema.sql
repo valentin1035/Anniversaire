@@ -136,6 +136,55 @@ drop policy if exists golf_debile_submissions_public_select on public.golf_debil
 create policy golf_debile_submissions_public_select on public.golf_debile_submissions
 for select to anon, authenticated using (true);
 
+-- 100% Débile : quiz synchronisé (10 questions, 30 s, élimination)
+create table if not exists public.debile100_state (
+  event_id uuid primary key references public.events(id) on delete cascade,
+  questions jsonb not null default '[]'::jsonb,
+  current_question int not null default 0,
+  phase text not null default 'idle',
+  question_started_at timestamptz,
+  constraint debile100_state_phase check (phase in ('idle', 'playing', 'revealed')),
+  constraint debile100_state_question_range check (current_question between 0 and 10)
+);
+
+create table if not exists public.debile100_player_status (
+  event_id uuid not null references public.events(id) on delete cascade,
+  player_id uuid not null references public.players(id) on delete cascade,
+  status text not null default 'active',
+  eliminated_at_question int,
+  primary key (event_id, player_id),
+  constraint debile100_player_status_value check (status in ('active', 'eliminated'))
+);
+
+create table if not exists public.debile100_answers (
+  id uuid primary key default gen_random_uuid(),
+  event_id uuid not null references public.events(id) on delete cascade,
+  player_id uuid not null references public.players(id) on delete cascade,
+  question_index int not null,
+  choice_id text not null,
+  created_at timestamptz not null default now(),
+  constraint debile100_answers_unique unique (event_id, player_id, question_index),
+  constraint debile100_answers_question_range check (question_index between 1 and 10)
+);
+
+create index if not exists idx_debile100_answers_event on public.debile100_answers(event_id, question_index);
+
+alter table public.debile100_state enable row level security;
+alter table public.debile100_player_status enable row level security;
+alter table public.debile100_answers enable row level security;
+
+drop policy if exists debile100_state_public_select on public.debile100_state;
+create policy debile100_state_public_select on public.debile100_state
+for select to anon, authenticated using (true);
+
+drop policy if exists debile100_player_status_public_select on public.debile100_player_status;
+create policy debile100_player_status_public_select on public.debile100_player_status
+for select to anon, authenticated using (true);
+
+drop policy if exists debile100_answers_public_select on public.debile100_answers;
+create policy debile100_answers_public_select on public.debile100_answers
+for select to anon, authenticated using (true);
+
 -- Migration pour projet existant (sans recréer la table)
 alter table public.beer_pong_state add column if not exists final_winner_key text;
 alter table public.beer_pong_state add column if not exists small_final_winner_key text;

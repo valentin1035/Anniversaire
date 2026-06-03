@@ -22,6 +22,16 @@ import {
 import { hashSecretCode } from "@/lib/auth";
 import { getSupabaseAdminClient, getSupabasePublicClient } from "@/lib/supabase";
 import {
+  createDefaultQuestions,
+  DEBILE100_QUESTION_COUNT,
+  canSubmitDebile100Answer,
+  getQuestionByIndex,
+  isQuestionTimerExpired,
+  normalizeQuestions,
+  type Debile100Phase,
+  type Debile100Question
+} from "@/lib/debile100";
+import {
   computeGolfDebileEventPoints,
   GOLF_DEBILE_PLAYER_COUNT,
   parseGolfDebileInput,
@@ -29,6 +39,7 @@ import {
 } from "@/lib/golf-debile";
 import type {
   BeerPongState,
+  Debile100State,
   GolfDebileState,
   MolkputeState,
   EventItem,
@@ -950,4 +961,294 @@ export async function resetGolfDebile(eventId: string) {
     { onConflict: "event_id" }
   );
   await clearGolfDebileEventScores(eventId);
+}
+
+export async function getDebile100State(eventId: string) {
+  const supabase = getSupabasePublicClient();
+  const { data, error } = await supabase
+    .from("debile100_state")
+    .select("event_id,questions,current_question,phase,question_started_at")
+    .eq("event_id", eventId)
+    .maybeSingle<Debile100State>();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return {
+    ...data,
+    questions: normalizeQuestions(data.questions)
+  };
+}
+
+async function ensureDebile100State(eventId: string) {
+  const existing = await getDebile100State(eventId);
+  if (existing) {
+    return existing;
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase.from("debile100_state").insert({
+    event_id: eventId,
+    questions: createDefaultQuestions(),
+    current_question: 0,
+    phase: "idle",
+    question_started_at: null
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return getDebile100State(eventId);
+}
+
+export async function saveDebile100Questions(eventId: string, questions: Debile100Question[]) {
+  if (questions.length !== DEBILE100_QUESTION_COUNT) {
+    throw new Error(`Il faut exactement ${DEBILE100_QUESTION_COUNT} questions.`);
+  }
+
+  for (const question of questions) {
+    if (!question.text.trim()) {
+      throw new Error(`La question ${question.index} est vide.`);
+    }
+    if (question.choices.length < 2) {
+      throw new Error(`La question ${question.index} doit avoir au moins 2 réponses.`);
+    }
+    if (!question.choices.some((choice) => choice.id === question.correctChoiceId)) {
+      throw new Error(`La question ${question.index} : bonne réponse invalide.`);
+    }
+  }
+
+  await ensureDebile100State(eventId);
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase.from("debile100_state").upsert(
+    {
+      event_id: eventId,
+      questions
+    },
+    { onConflict: "event_id" }
+  );
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function getDebile100PlayerStatuses(eventId: string) {
+  const supabase = getSupabasePublicClient();
+  const { data, error } = await supabase
+    .from("debile100_player_status")
+    .select("player_id,status,eliminated_at_question")
+    .eq("event_id", eventId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+  return data ?? [];
+}
+
+export async function getDebile100AnswersForQuestion(eventId: string, questionIndex: number) {
+  const supabase = getSupabasePublicClient();
+  const { data, error } = await supabase
+    .from("debile100_answers")
+    .select("player_id,choice_id,question_index")
+    .eq("event_id", eventId)
+    .eq("question_index", questionIndex);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+  return data ?? [];
+}
+
+async function ensureDebile100PlayerActive(eventId: string, playerId: string) {
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase.from("debile100_player_status").upsert(
+    {
+      event_id: eventId,
+      player_id: playerId,
+      status: "active",
+      eliminated_at_question: null
+    },
+    { onConflict: "event_id,player_id" }
+  );
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function submitDebile100Answer(
+  eventId: string,
+  playerId: string,
+  choiceId: string
+) {
+  const state = await getDebile100State(eventId);
+  if (!state) {
+    throw new Error("Le quiz n'est pas encore configuré.");
+  }
+  if (state.phase !== "playing") {
+    throw new Error("Ce n'est pas le moment de répondre.");
+  }
+  if (state.current_question < 1) {
+    throw new Error("Aucune question en cours.");
+  }
+  if (!canSubmitDebile100Answer(state.question_started_at, state.phase)) {
+    throw new Error("Le temps est écoulé — trop tard pour répondre.");
+  }
+
+  const statuses = await getDebile100PlayerStatuses(eventId);
+  const myStatus = statuses.find((row) => row.player_id === playerId);
+  if (myStatus?.status === "eliminated") {
+    throw new Error("Tu es éliminé.");
+  }
+
+  const question = getQuestionByIndex(state.questions, state.current_question);
+  if (!question) {
+    throw new Error("Question introuvable.");
+  }
+  if (!question.choices.some((choice) => choice.id === choiceId)) {
+    throw new Error("Réponse invalide.");
+  }
+
+  const existing = await getDebile100AnswersForQuestion(eventId, state.current_question);
+  if (existing.some((row) => row.player_id === playerId)) {
+    throw new Error("Tu as déjà répondu.");
+  }
+
+  await ensureDebile100PlayerActive(eventId, playerId);
+
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase.from("debile100_answers").insert({
+    event_id: eventId,
+    player_id: playerId,
+    question_index: state.current_question,
+    choice_id: choiceId
+  });
+
+  if (error) {
+    if (error.code === "23505") {
+      throw new Error("Tu as déjà répondu.");
+    }
+    throw new Error(error.message);
+  }
+}
+
+export async function startDebile100Question(eventId: string, questionIndex: number) {
+  if (questionIndex < 1 || questionIndex > DEBILE100_QUESTION_COUNT) {
+    throw new Error("Numéro de question invalide.");
+  }
+
+  const state = await ensureDebile100State(eventId);
+  if (!state) {
+    throw new Error("État introuvable.");
+  }
+
+  if (questionIndex === 1) {
+    if (state.phase !== "idle" || state.current_question !== 0) {
+      throw new Error("Réinitialise la partie pour relancer la question 1.");
+    }
+  } else if (state.phase !== "revealed" || state.current_question !== questionIndex - 1) {
+    throw new Error(`Affiche d'abord la réponse de la question ${questionIndex - 1}.`);
+  }
+
+  const supabase = getSupabaseAdminClient();
+
+  if (questionIndex === 1) {
+    await supabase.from("debile100_player_status").delete().eq("event_id", eventId);
+    await supabase.from("debile100_answers").delete().eq("event_id", eventId);
+  }
+
+  const { error } = await supabase.from("debile100_state").upsert(
+    {
+      event_id: eventId,
+      questions: state.questions,
+      current_question: questionIndex,
+      phase: "playing",
+      question_started_at: new Date().toISOString()
+    },
+    { onConflict: "event_id" }
+  );
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function revealDebile100Question(eventId: string, questionIndex: number) {
+  const state = await getDebile100State(eventId);
+  if (!state) {
+    throw new Error("État introuvable.");
+  }
+  if (state.current_question !== questionIndex) {
+    throw new Error(`La question ${questionIndex} n'est pas celle en cours.`);
+  }
+  if (state.phase !== "playing") {
+    throw new Error("La question doit être lancée avant d'afficher la réponse.");
+  }
+
+  const question = getQuestionByIndex(state.questions, questionIndex);
+  if (!question) {
+    throw new Error("Question introuvable.");
+  }
+
+  const answers = await getDebile100AnswersForQuestion(eventId, questionIndex);
+  const statuses = await getDebile100PlayerStatuses(eventId);
+  const activePlayers = statuses.filter((row) => row.status === "active");
+
+  const supabase = getSupabaseAdminClient();
+  const toEliminate = new Set<string>();
+
+  for (const row of activePlayers) {
+    const answer = answers.find((entry) => entry.player_id === row.player_id);
+    if (!answer || answer.choice_id !== question.correctChoiceId) {
+      toEliminate.add(row.player_id);
+    }
+  }
+
+  for (const playerId of toEliminate) {
+    const { error } = await supabase.from("debile100_player_status").upsert(
+      {
+        event_id: eventId,
+        player_id: playerId,
+        status: "eliminated",
+        eliminated_at_question: questionIndex
+      },
+      { onConflict: "event_id,player_id" }
+    );
+    if (error) {
+      throw new Error(error.message);
+    }
+  }
+
+  const { error } = await supabase.from("debile100_state").update({
+    phase: "revealed",
+    question_started_at: null
+  }).eq("event_id", eventId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function resetDebile100(eventId: string) {
+  const state = await getDebile100State(eventId);
+  const supabase = getSupabaseAdminClient();
+  await supabase.from("debile100_answers").delete().eq("event_id", eventId);
+  await supabase.from("debile100_player_status").delete().eq("event_id", eventId);
+  await supabase.from("debile100_state").upsert(
+    {
+      event_id: eventId,
+      questions: state?.questions ?? createDefaultQuestions(),
+      current_question: 0,
+      phase: "idle",
+      question_started_at: null
+    },
+    { onConflict: "event_id" }
+  );
 }

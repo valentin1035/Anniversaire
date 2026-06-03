@@ -1439,6 +1439,174 @@ button.bracketTeamSlot:disabled {
   margin: 0 0 12px;
 }
 
+.debile100Quiz {
+  display: grid;
+  gap: 16px;
+}
+
+.debile100QuestionCard {
+  padding: 18px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.debile100QuestionHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.debile100Timer {
+  font-size: 1.4rem;
+  font-weight: 800;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.25);
+  border: 1px solid rgba(59, 130, 246, 0.5);
+}
+
+.debile100TimerGrace {
+  background: rgba(255, 200, 80, 0.25);
+  color: #f5d080;
+}
+
+.debile100TimerUrgent {
+  background: rgba(239, 68, 68, 0.3);
+  border-color: rgba(239, 68, 68, 0.6);
+  animation: pulse 0.8s ease-in-out infinite;
+}
+
+.debile100QuestionText {
+  margin: 0 0 16px;
+  font-size: 1.15rem;
+  line-height: 1.4;
+}
+
+.debile100Choices {
+  display: grid;
+  gap: 10px;
+}
+
+.debile100Choice {
+  width: 100%;
+  text-align: left;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.debile100Choice:disabled:not(.debile100ChoiceSelected) {
+  opacity: 0.85;
+  cursor: not-allowed;
+}
+
+.debile100ChoiceSelected {
+  border-color: #1d4ed8;
+  background: #2563eb;
+  color: #ffffff;
+  font-weight: 600;
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+.debile100ChoiceCorrect {
+  border-color: #22c55e;
+  background: rgba(34, 197, 94, 0.2);
+  color: #bbf7d0;
+}
+
+.debile100ChoiceWrong {
+  border-color: #ef4444;
+  background: rgba(239, 68, 68, 0.25);
+  color: #fecaca;
+}
+
+.debile100ChoiceMuted {
+  opacity: 0.45;
+}
+
+.debile100Verdict {
+  margin: 16px 0 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.debile100Eliminated {
+  padding: 24px;
+  text-align: center;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.08);
+  border-radius: 14px;
+}
+
+.debile100Waiting {
+  padding: 20px;
+  text-align: center;
+}
+
+.debile100Hint {
+  margin: 0;
+}
+
+.debile100Admin {
+  display: grid;
+  gap: 20px;
+}
+
+.debile100AdminQuestions {
+  display: grid;
+  gap: 16px;
+  max-height: 60vh;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+
+.debile100AdminQuestion {
+  padding: 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.debile100AdminQuestion h4 {
+  margin: 0;
+}
+
+.debile100AdminQuestion input[type="text"] {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+}
+
+.debile100AdminChoiceRow {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.debile100AdminControls {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.debile100AdminControlRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 @media (max-width: 640px) {
   .bracketTreeMain {
     grid-template-columns: 1fr;

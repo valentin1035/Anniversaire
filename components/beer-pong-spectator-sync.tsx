@@ -3,8 +3,14 @@
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
-/** Rafraîchit la page toutes les 5 s pour les spectateurs (pas l'admin). */
-export function BeerPongSpectatorSync({ enabled }: { enabled: boolean }) {
+/** Rafraîchit la page pour synchroniser l'état (quiz, spectateurs). */
+export function BeerPongSpectatorSync({
+  enabled,
+  intervalMs = 5000
+}: {
+  enabled: boolean;
+  intervalMs?: number;
+}) {
   const router = useRouter();
 
   useEffect(() => {
@@ -13,9 +19,9 @@ export function BeerPongSpectatorSync({ enabled }: { enabled: boolean }) {
     }
     const intervalId = window.setInterval(() => {
       router.refresh();
-    }, 5000);
+    }, intervalMs);
     return () => window.clearInterval(intervalId);
-  }, [enabled, router]);
+  }, [enabled, intervalMs, router]);
 
   return null;
 }

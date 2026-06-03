@@ -58,6 +58,9 @@ export default async function AdminPage({ searchParams }: AdminProps) {
           <Link href="/admin/golf-debile" className="btnPrimary" style={{ display: "inline-block" }}>
             ⛳ Gérer Golf Débile
           </Link>
+          <Link href="/admin/debile100" className="btnPrimary" style={{ display: "inline-block" }}>
+            😂 Gérer 100% Débile
+          </Link>
         </p>
       </section>
 

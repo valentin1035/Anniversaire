@@ -13,6 +13,8 @@ export async function POST(request: NextRequest) {
   revalidatePath("/epreuves/2");
   revalidatePath("/epreuves/3");
   revalidatePath("/admin/golf-debile");
+  revalidatePath("/admin/debile100");
+  revalidatePath("/epreuves/5");
   revalidatePath("/");
   return response;
 }
