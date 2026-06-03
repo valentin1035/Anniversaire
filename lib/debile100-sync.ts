@@ -72,6 +72,7 @@ export async function buildDebile100SyncPayload(
 
   return {
     serverNow,
+    questionStartedAt,
     currentQuestion,
     phase,
     timerPhase: timer.timerPhase,
