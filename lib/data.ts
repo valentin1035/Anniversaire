@@ -1183,7 +1183,7 @@ export async function submitDebile100Answer(
   }
 }
 
-export async function useDebile100Hint(eventId: string, playerId: string) {
+export async function claimDebile100Hint(eventId: string, playerId: string) {
   const state = await getDebile100State(eventId);
   if (!state || state.phase !== "playing") {
     throw new Error("Ce n'est pas le moment d'utiliser un indice.");

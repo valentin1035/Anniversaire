@@ -1,7 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { NextRequest, NextResponse } from "next/server";
 import { getPlayerSession } from "@/lib/auth";
-import { useDebile100Hint } from "@/lib/data";
+import { claimDebile100Hint } from "@/lib/data";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "eventId requis." }, { status: 400 });
     }
 
-    const hintText = await useDebile100Hint(body.eventId, session.playerId);
+    const hintText = await claimDebile100Hint(body.eventId, session.playerId);
     revalidatePath("/epreuves/5");
     return NextResponse.json({ ok: true, hintText });
   } catch (error) {

@@ -185,7 +185,7 @@ export function getRevealOutcome(
   phase: Debile100Phase,
   myChoiceId: string | null,
   question: Debile100Question | null,
-  progress: Debile100PlayerProgress
+  _progress: Debile100PlayerProgress
 ): Debile100RevealOutcome {
   if (phase !== "revealed" || !question) {
     return null;

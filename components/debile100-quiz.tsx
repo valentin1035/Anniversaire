@@ -48,14 +48,24 @@ function toGameFromProps(props: Debile100PlayerView): GameState {
 }
 
 function toGameFromPayload(payload: Debile100SyncPayload): GameState {
-  const {
-    serverNow: _sn,
-    timerPhase: _tp,
-    secondsRemaining: _sr,
-    graceSecondsRemaining: _gr,
-    ...rest
-  } = payload;
-  return rest;
+  return {
+    questionStartedAt: payload.questionStartedAt,
+    currentQuestion: payload.currentQuestion,
+    phase: payload.phase,
+    playerStatus: payload.playerStatus,
+    myChoiceId: payload.myChoiceId,
+    showQuestion: payload.showQuestion,
+    currentQuestionData: payload.currentQuestionData,
+    viewMode: payload.viewMode,
+    waitingMessage: payload.waitingMessage,
+    finaleQualified: payload.finaleQualified,
+    hintAvailable: payload.hintAvailable,
+    hintUsed: payload.hintUsed,
+    hintText: payload.hintText,
+    passAvailable: payload.passAvailable,
+    passUsed: payload.passUsed,
+    revealOutcome: payload.revealOutcome
+  };
 }
 
 function verdictMessage(outcome: Debile100RevealOutcome): string | null {
@@ -168,7 +178,7 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
     }
   }
 
-  async function useHint() {
+  async function requestHint() {
     setError(null);
     setPending(true);
     try {
@@ -195,7 +205,7 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
     }
   }
 
-  async function usePass() {
+  async function requestPass() {
     if (!canSubmitDebile100Answer(game.questionStartedAt, game.phase, serverNowMs())) {
       setError("Le temps est écoulé — trop tard pour utiliser Passe.");
       return;
@@ -265,7 +275,6 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
   const correctId = question.correctChoiceId;
   const isRevealed = game.phase === "revealed";
   const usedPass = isPassAnswer(game.myChoiceId);
-  const isCorrect = isAnswerQualifying(game.myChoiceId, correctId);
   const inGrace = game.phase === "playing" && timer.timerPhase === "grace";
   const timerRunning = game.phase === "playing" && timer.timerPhase === "running";
   const timerExpired = game.phase === "playing" && timer.timerPhase === "expired";
@@ -328,7 +337,7 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
                   : "beerPongBtnSecondary debile100HintBtn debile100PowerupUsed"
               }
               disabled={hintDisabled}
-              onClick={() => void useHint()}
+              onClick={() => void requestHint()}
             >
               {game.hintUsed || localHintText ? "Indice utilisé" : "Indice"}
             </button>
@@ -342,7 +351,7 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
                   : "beerPongBtnSecondary debile100PassBtn debile100PowerupUsed"
               }
               disabled={passDisabled}
-              onClick={() => void usePass()}
+              onClick={() => void requestPass()}
             >
               {game.passUsed || usedPass ? "Passe utilisé" : "Passe"}
             </button>
