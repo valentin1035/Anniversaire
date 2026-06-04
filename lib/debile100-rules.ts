@@ -57,6 +57,31 @@ export function isCatchupRetryQuestion(index: number): boolean {
   return index === 9 || index === 11;
 }
 
+export function getCatchupQuestionAfterGate(gateIndex: number): number {
+  return gateIndex + 1;
+}
+
+export function shouldAssignCatchupOnQuestionStart(questionIndex: number): boolean {
+  return questionIndex === 9 || questionIndex === 11;
+}
+
+/** Après la Q8 ou Q10 : ce joueur doit-il jouer la Q9 ou Q11 ? */
+export function mustPlayCatchupQuestion(
+  progress: Debile100PlayerProgress,
+  catchupQuestionIndex: number,
+  gateAnswerChoiceId: string | null,
+  gateCorrectChoiceId: string
+): boolean {
+  const gateIndex = catchupQuestionIndex - 1;
+  if (progress.skip_question_index === catchupQuestionIndex) {
+    return false;
+  }
+  if (progress.catchup_question_index === catchupQuestionIndex) {
+    return true;
+  }
+  return !isAnswerQualifying(gateAnswerChoiceId, gateCorrectChoiceId);
+}
+
 export function canUseHint(progress: Debile100PlayerProgress | null, questionIndex: number): boolean {
   return (
     isHintQuestion(questionIndex) &&
@@ -113,6 +138,12 @@ export function getWaitingMessage(
   currentQuestion: number
 ): string {
   if (progress.skip_question_index === currentQuestion) {
+    if (currentQuestion === 9) {
+      return "Tu as validé la question 8 — en attente de la question 10.";
+    }
+    if (currentQuestion === 11) {
+      return "Tu as validé la question 10 — en attente de la question 12.";
+    }
     const next = Math.min(currentQuestion + 1, DEBILE100_QUESTION_COUNT);
     return `Tu es qualifié(e) — en attente de la question ${next}.`;
   }
@@ -228,6 +259,12 @@ export function getRevealOutcome(
   }
 
   if (isCatchupRetryQuestion(questionIndex)) {
+    if (questionIndex === 9 && qualifying) {
+      return "qualified";
+    }
+    if (questionIndex === 11 && qualifying) {
+      return "qualified";
+    }
     return qualifying ? "qualified" : "eliminated";
   }
 

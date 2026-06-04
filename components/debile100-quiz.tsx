@@ -68,16 +68,37 @@ function toGameFromPayload(payload: Debile100SyncPayload): GameState {
   };
 }
 
-function verdictMessage(outcome: Debile100RevealOutcome): string | null {
+function verdictMessage(
+  outcome: Debile100RevealOutcome,
+  questionIndex: number
+): string | null {
   switch (outcome) {
     case "finale":
       return "Bravo, vous êtes qualifié(e) jusqu'à la finale !";
     case "qualified":
+      if (questionIndex === 9) {
+        return "Bonne réponse — vous êtes qualifié(e) pour la question 10.";
+      }
+      if (questionIndex === 11) {
+        return "Bonne réponse — vous êtes qualifié(e) pour la question 12.";
+      }
       return "Vous êtes qualifiés pour la question suivante.";
     case "qualified_skip":
-      return "Bonne réponse — vous passez directement à la question suivante.";
+      if (questionIndex === 8) {
+        return "Bonne réponse — vous passez la question 9, rendez-vous à la question 10.";
+      }
+      if (questionIndex === 10) {
+        return "Bonne réponse — vous passez la question 11, rendez-vous à la question 12.";
+      }
+      return "Bonne réponse — vous passez la question de rattrapage.";
     case "catchup_offer":
-      return "Mauvaise réponse — vous avez une question de rattrapage.";
+      if (questionIndex === 8) {
+        return "Mauvaise réponse — vous aurez la question 9 pour vous rattraper.";
+      }
+      if (questionIndex === 10) {
+        return "Mauvaise réponse — vous aurez la question 11 pour vous rattraper.";
+      }
+      return "Mauvaise réponse — question de rattrapage à venir.";
     case "pass_ok":
       return "Passe utilisé — vous êtes qualifié(e) pour la question suivante.";
     case "eliminated":
@@ -279,7 +300,7 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
   const inGrace = game.phase === "playing" && timer.timerPhase === "grace";
   const timerRunning = game.phase === "playing" && timer.timerPhase === "running";
   const timerExpired = game.phase === "playing" && timer.timerPhase === "expired";
-  const verdict = verdictMessage(game.revealOutcome);
+  const verdict = verdictMessage(game.revealOutcome, question.index);
 
   const canAnswer =
     canSubmitDebile100Answer(game.questionStartedAt, game.phase, serverNowMs()) &&

@@ -37,9 +37,12 @@ import {
   canUsePass,
   createDefaultDebile100Progress,
   getProgressAfterReveal,
+  isCatchupGateQuestion,
   isCatchupRetryQuestion,
   isPassAnswer,
   isPassQuestion,
+  mustPlayCatchupQuestion,
+  shouldAssignCatchupOnQuestionStart,
   shouldPlayerPlayQuestion,
   type Debile100PlayerProgress
 } from "@/lib/debile100-rules";
@@ -1160,8 +1163,8 @@ export async function submitDebile100Answer(
 
   const statuses = await getDebile100PlayerStatuses(eventId);
   const myStatus = statuses.find((row) => row.player_id === playerId);
-  const progress = myStatus ? toDebile100PlayerProgress(myStatus) : null;
-  if (progress?.status === "eliminated") {
+  const progress = getDebile100PlayerProgress(playerId, myStatus);
+  if (progress.status === "eliminated") {
     throw new Error("Tu es éliminé.");
   }
   if (!shouldPlayerPlayQuestion(progress, state.current_question)) {
@@ -1214,7 +1217,7 @@ export async function claimDebile100Hint(eventId: string, playerId: string) {
 
   const statuses = await getDebile100PlayerStatuses(eventId);
   const row = statuses.find((entry) => entry.player_id === playerId);
-  const progress = row ? toDebile100PlayerProgress(row) : null;
+  const progress = getDebile100PlayerProgress(playerId, row);
   if (!canUseHint(progress, state.current_question)) {
     throw new Error("Tu as déjà utilisé ton indice (questions 5 à 7).");
   }
@@ -1263,7 +1266,7 @@ export async function submitDebile100Pass(eventId: string, playerId: string) {
 
   const statuses = await getDebile100PlayerStatuses(eventId);
   const row = statuses.find((entry) => entry.player_id === playerId);
-  const progress = row ? toDebile100PlayerProgress(row) : null;
+  const progress = getDebile100PlayerProgress(playerId, row);
   if (!canUsePass(progress, state.current_question)) {
     throw new Error("Tu as déjà utilisé Passe (questions 12 à 14).");
   }
@@ -1328,6 +1331,66 @@ async function clearDebile100SkipBeforeQuestion(eventId: string, questionIndex: 
   }
 }
 
+/** Assigne Q9/Q11 aux joueurs qui ont raté Q8/Q10 avant le lancement de la question. */
+async function syncCatchupAssignmentsBeforeQuestion(eventId: string, questionIndex: number) {
+  if (!shouldAssignCatchupOnQuestionStart(questionIndex)) {
+    return;
+  }
+
+  const gateIndex = questionIndex - 1;
+  const state = await getDebile100State(eventId);
+  if (!state) {
+    return;
+  }
+
+  const gateQuestion = getQuestionByIndex(state.questions, gateIndex);
+  if (!gateQuestion) {
+    return;
+  }
+
+  const gateAnswers = await getDebile100AnswersForQuestion(eventId, gateIndex);
+  const statuses = await getDebile100PlayerStatuses(eventId);
+  const supabase = getSupabaseAdminClient();
+
+  for (const row of statuses) {
+    if (row.status !== "active") {
+      continue;
+    }
+
+    const progress = toDebile100PlayerProgress(row);
+    const gateAnswer = gateAnswers.find((entry) => entry.player_id === row.player_id);
+    const gateChoiceId = gateAnswer?.choice_id ?? null;
+
+    if (
+      !mustPlayCatchupQuestion(
+        progress,
+        questionIndex,
+        gateChoiceId,
+        gateQuestion.correctChoiceId
+      )
+    ) {
+      continue;
+    }
+
+    const { error } = await supabase.from("debile100_player_status").upsert(
+      {
+        event_id: eventId,
+        player_id: row.player_id,
+        status: "active",
+        eliminated_at_question: null,
+        hint_used_at_question: progress.hint_used_at_question,
+        pass_used_at_question: progress.pass_used_at_question,
+        catchup_question_index: questionIndex,
+        skip_question_index: null
+      },
+      { onConflict: "event_id,player_id" }
+    );
+    if (error) {
+      throw new Error(error.message);
+    }
+  }
+}
+
 export async function startDebile100Question(eventId: string, questionIndex: number) {
   if (questionIndex < 1 || questionIndex > DEBILE100_QUESTION_COUNT) {
     throw new Error("Numéro de question invalide.");
@@ -1353,6 +1416,7 @@ export async function startDebile100Question(eventId: string, questionIndex: num
     await supabase.from("debile100_answers").delete().eq("event_id", eventId);
   } else {
     await clearDebile100SkipBeforeQuestion(eventId, questionIndex);
+    await syncCatchupAssignmentsBeforeQuestion(eventId, questionIndex);
   }
 
   const { error } = await supabase.from("debile100_state").upsert(
@@ -1390,25 +1454,40 @@ export async function revealDebile100Question(eventId: string, questionIndex: nu
 
   const answers = await getDebile100AnswersForQuestion(eventId, questionIndex);
   const statuses = await getDebile100PlayerStatuses(eventId);
-  const activePlayers = statuses.filter((row) => row.status === "active");
-
   const supabase = getSupabaseAdminClient();
 
-  for (const row of activePlayers) {
-    const progress = toDebile100PlayerProgress(row);
+  const playerIds = new Set<string>();
+  for (const row of statuses) {
+    if (row.status === "active") {
+      playerIds.add(row.player_id);
+    }
+  }
+  for (const answer of answers) {
+    playerIds.add(answer.player_id);
+  }
 
-    if (isCatchupRetryQuestion(questionIndex) && progress.catchup_question_index !== questionIndex) {
+  for (const playerId of playerIds) {
+    const row = statuses.find((entry) => entry.player_id === playerId);
+    const progress = getDebile100PlayerProgress(playerId, row);
+
+    if (progress.status === "eliminated") {
       continue;
     }
 
-    const answer = answers.find((entry) => entry.player_id === row.player_id);
+    if (isCatchupRetryQuestion(questionIndex)) {
+      if (progress.catchup_question_index !== questionIndex) {
+        continue;
+      }
+    }
+
+    const answer = answers.find((entry) => entry.player_id === playerId);
     const choiceId = answer?.choice_id ?? null;
     const updated = getProgressAfterReveal(progress, questionIndex, choiceId, question.correctChoiceId);
 
     const { error } = await supabase.from("debile100_player_status").upsert(
       {
         event_id: eventId,
-        player_id: row.player_id,
+        player_id: playerId,
         status: updated.status,
         eliminated_at_question: updated.eliminated_at_question,
         hint_used_at_question: updated.hint_used_at_question,
