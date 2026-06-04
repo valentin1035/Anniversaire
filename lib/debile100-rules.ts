@@ -17,6 +17,19 @@ export type Debile100PlayerProgress = {
   skip_question_index: number | null;
 };
 
+/** Joueur connecté sans encore de ligne en base (avant la 1re réponse). */
+export function createDefaultDebile100Progress(playerId: string): Debile100PlayerProgress {
+  return {
+    player_id: playerId,
+    status: "active",
+    eliminated_at_question: null,
+    hint_used_at_question: null,
+    pass_used_at_question: null,
+    catchup_question_index: null,
+    skip_question_index: null
+  };
+}
+
 export type Debile100ViewMode = "question" | "waiting" | "eliminated" | "finale";
 
 export type Debile100RevealOutcome =
@@ -80,7 +93,10 @@ export function shouldPlayerPlayQuestion(
   progress: Debile100PlayerProgress | null,
   currentQuestion: number
 ): boolean {
-  if (!progress || progress.status !== "active") {
+  if (!progress) {
+    return currentQuestion > 0 && !isCatchupRetryQuestion(currentQuestion);
+  }
+  if (progress.status !== "active") {
     return false;
   }
   if (progress.skip_question_index === currentQuestion) {
@@ -124,7 +140,7 @@ export function resolvePlayerView(
   passAvailable: boolean;
   revealOutcome: Debile100RevealOutcome;
 } {
-  if (!progress || progress.status === "eliminated") {
+  if (progress?.status === "eliminated") {
     return {
       viewMode: "eliminated",
       showQuestion: false,
@@ -136,27 +152,29 @@ export function resolvePlayerView(
     };
   }
 
-  const finaleQualified = currentQuestion >= 14 && progress.status === "active";
+  const activeProgress = progress ?? createDefaultDebile100Progress("unknown");
+
+  const finaleQualified = currentQuestion >= 14 && activeProgress.status === "active";
 
   if (finaleQualified) {
     return {
       viewMode: "finale",
-      showQuestion: shouldPlayerPlayQuestion(progress, currentQuestion) && Boolean(question),
+      showQuestion: shouldPlayerPlayQuestion(activeProgress, currentQuestion) && Boolean(question),
       waitingMessage: null,
       finaleQualified: true,
       hintAvailable: false,
-      passAvailable: canUsePass(progress, currentQuestion) && phase === "playing",
-      revealOutcome: getRevealOutcome(currentQuestion, phase, myChoiceId, question, progress)
+      passAvailable: canUsePass(activeProgress, currentQuestion) && phase === "playing",
+      revealOutcome: getRevealOutcome(currentQuestion, phase, myChoiceId, question, activeProgress)
     };
   }
 
-  const canPlay = shouldPlayerPlayQuestion(progress, currentQuestion);
+  const canPlay = shouldPlayerPlayQuestion(activeProgress, currentQuestion);
   const inRound = currentQuestion > 0 && (phase === "playing" || phase === "revealed") && Boolean(question);
 
   if (!inRound || !canPlay) {
     const waiting =
       inRound && !canPlay
-        ? getWaitingMessage(progress, currentQuestion)
+        ? getWaitingMessage(activeProgress, currentQuestion)
         : null;
     return {
       viewMode: waiting ? "waiting" : "waiting",
@@ -174,9 +192,9 @@ export function resolvePlayerView(
     showQuestion: true,
     waitingMessage: null,
     finaleQualified: false,
-    hintAvailable: canUseHint(progress, currentQuestion) && phase === "playing",
-    passAvailable: canUsePass(progress, currentQuestion) && phase === "playing",
-    revealOutcome: getRevealOutcome(currentQuestion, phase, myChoiceId, question, progress)
+    hintAvailable: canUseHint(activeProgress, currentQuestion) && phase === "playing",
+    passAvailable: canUsePass(activeProgress, currentQuestion) && phase === "playing",
+    revealOutcome: getRevealOutcome(currentQuestion, phase, myChoiceId, question, activeProgress)
   };
 }
 

@@ -262,11 +262,12 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
         ) : null}
         <p className="subtitle">
           {game.waitingMessage ??
-            `En attente de la question ${game.currentQuestion > 0 ? game.currentQuestion + 1 : 1}…`}
+            (game.phase === "playing" && game.currentQuestion > 0
+              ? `Question ${game.currentQuestion} — chargement…`
+              : game.phase === "revealed" && game.currentQuestion > 0
+                ? "En attente de la prochaine question…"
+                : "En attente du lancement par l'organisateur…")}
         </p>
-        {game.currentQuestion > 0 && game.phase === "revealed" && !game.waitingMessage ? (
-          <p className="ok">Dernière question terminée — prépare-toi pour la suite.</p>
-        ) : null}
       </div>
     );
   }

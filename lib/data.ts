@@ -35,6 +35,7 @@ import {
 import {
   canUseHint,
   canUsePass,
+  createDefaultDebile100Progress,
   getProgressAfterReveal,
   isCatchupRetryQuestion,
   isPassAnswer,
@@ -1048,6 +1049,24 @@ export async function saveDebile100Questions(eventId: string, questions: Debile1
   if (error) {
     throw new Error(error.message);
   }
+}
+
+export function getDebile100PlayerProgress(
+  playerId: string,
+  row?: {
+    player_id: string;
+    status: string;
+    eliminated_at_question: number | null;
+    hint_used_at_question?: number | null;
+    pass_used_at_question?: number | null;
+    catchup_question_index?: number | null;
+    skip_question_index?: number | null;
+  }
+): Debile100PlayerProgress {
+  if (row) {
+    return toDebile100PlayerProgress(row);
+  }
+  return createDefaultDebile100Progress(playerId);
 }
 
 export function toDebile100PlayerProgress(row: {

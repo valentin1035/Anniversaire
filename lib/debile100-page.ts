@@ -14,9 +14,9 @@ import {
 } from "@/lib/debile100-rules";
 import {
   getDebile100AnswersForQuestion,
+  getDebile100PlayerProgress,
   getDebile100PlayerStatuses,
-  getDebile100State,
-  toDebile100PlayerProgress
+  getDebile100State
 } from "@/lib/data";
 
 export type Debile100AdminView = {
@@ -129,8 +129,8 @@ export async function loadDebile100PlayerView(
 
   const statuses = await getDebile100PlayerStatuses(eventId);
   const myRow = statuses.find((row) => row.player_id === playerId);
-  const progress = myRow ? toDebile100PlayerProgress(myRow) : null;
-  const playerStatus = progress?.status === "eliminated" ? "eliminated" : "active";
+  const progress = getDebile100PlayerProgress(playerId, myRow);
+  const playerStatus = progress.status === "eliminated" ? "eliminated" : "active";
 
   let myChoiceId: string | null = null;
   if (currentQuestion > 0) {
@@ -148,10 +148,9 @@ export async function loadDebile100PlayerView(
     currentQuestion > 0 &&
     (phase === "playing" || phase === "revealed");
 
-  const view =
-    inRound && progress
-      ? resolvePlayerView(progress, currentQuestion, phase, question, myChoiceId)
-      : {
+  const view = inRound
+    ? resolvePlayerView(progress, currentQuestion, phase, question, myChoiceId)
+    : {
           viewMode: playerStatus === "eliminated" ? ("eliminated" as const) : ("waiting" as const),
           showQuestion: false,
           waitingMessage: null,
