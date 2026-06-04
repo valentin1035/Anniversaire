@@ -25,12 +25,23 @@ import {
   createDefaultQuestions,
   DEBILE100_QUESTION_COUNT,
   canSubmitDebile100Answer,
+  DEBILE100_PASS_CHOICE_ID,
   getQuestionByIndex,
   isQuestionTimerExpired,
   normalizeQuestions,
   type Debile100Phase,
   type Debile100Question
 } from "@/lib/debile100";
+import {
+  canUseHint,
+  canUsePass,
+  getProgressAfterReveal,
+  isCatchupRetryQuestion,
+  isPassAnswer,
+  isPassQuestion,
+  shouldPlayerPlayQuestion,
+  type Debile100PlayerProgress
+} from "@/lib/debile100-rules";
 import {
   computeGolfDebileEventPoints,
   GOLF_DEBILE_PLAYER_COUNT,
@@ -1039,11 +1050,33 @@ export async function saveDebile100Questions(eventId: string, questions: Debile1
   }
 }
 
+export function toDebile100PlayerProgress(row: {
+  player_id: string;
+  status: string;
+  eliminated_at_question: number | null;
+  hint_used_at_question?: number | null;
+  pass_used_at_question?: number | null;
+  catchup_question_index?: number | null;
+  skip_question_index?: number | null;
+}): Debile100PlayerProgress {
+  return {
+    player_id: row.player_id,
+    status: row.status === "eliminated" ? "eliminated" : "active",
+    eliminated_at_question: row.eliminated_at_question,
+    hint_used_at_question: row.hint_used_at_question ?? null,
+    pass_used_at_question: row.pass_used_at_question ?? null,
+    catchup_question_index: row.catchup_question_index ?? null,
+    skip_question_index: row.skip_question_index ?? null
+  };
+}
+
 export async function getDebile100PlayerStatuses(eventId: string) {
   const supabase = getSupabasePublicClient();
   const { data, error } = await supabase
     .from("debile100_player_status")
-    .select("player_id,status,eliminated_at_question")
+    .select(
+      "player_id,status,eliminated_at_question,hint_used_at_question,pass_used_at_question,catchup_question_index,skip_question_index"
+    )
     .eq("event_id", eventId);
 
   if (error) {
@@ -1073,9 +1106,13 @@ async function ensureDebile100PlayerActive(eventId: string, playerId: string) {
       event_id: eventId,
       player_id: playerId,
       status: "active",
-      eliminated_at_question: null
+      eliminated_at_question: null,
+      hint_used_at_question: null,
+      pass_used_at_question: null,
+      catchup_question_index: null,
+      skip_question_index: null
     },
-    { onConflict: "event_id,player_id" }
+    { onConflict: "event_id,player_id", ignoreDuplicates: true }
   );
 
   if (error) {
@@ -1104,13 +1141,20 @@ export async function submitDebile100Answer(
 
   const statuses = await getDebile100PlayerStatuses(eventId);
   const myStatus = statuses.find((row) => row.player_id === playerId);
-  if (myStatus?.status === "eliminated") {
+  const progress = myStatus ? toDebile100PlayerProgress(myStatus) : null;
+  if (progress?.status === "eliminated") {
     throw new Error("Tu es éliminé.");
+  }
+  if (!shouldPlayerPlayQuestion(progress, state.current_question)) {
+    throw new Error("Cette question ne te concerne pas.");
   }
 
   const question = getQuestionByIndex(state.questions, state.current_question);
   if (!question) {
     throw new Error("Question introuvable.");
+  }
+  if (isPassAnswer(choiceId)) {
+    throw new Error("Utilise le bouton Passe pour cette action.");
   }
   if (!question.choices.some((choice) => choice.id === choiceId)) {
     throw new Error("Réponse invalide.");
@@ -1139,6 +1183,132 @@ export async function submitDebile100Answer(
   }
 }
 
+export async function useDebile100Hint(eventId: string, playerId: string) {
+  const state = await getDebile100State(eventId);
+  if (!state || state.phase !== "playing") {
+    throw new Error("Ce n'est pas le moment d'utiliser un indice.");
+  }
+  const question = getQuestionByIndex(state.questions, state.current_question);
+  if (!question) {
+    throw new Error("Question introuvable.");
+  }
+
+  const statuses = await getDebile100PlayerStatuses(eventId);
+  const row = statuses.find((entry) => entry.player_id === playerId);
+  const progress = row ? toDebile100PlayerProgress(row) : null;
+  if (!canUseHint(progress, state.current_question)) {
+    throw new Error("Tu as déjà utilisé ton indice (questions 5 à 7).");
+  }
+  if (!shouldPlayerPlayQuestion(progress, state.current_question)) {
+    throw new Error("Tu ne participes pas à cette question.");
+  }
+
+  const hintText = question.hint?.trim();
+  if (!hintText) {
+    throw new Error("Aucun indice configuré pour cette question.");
+  }
+
+  await ensureDebile100PlayerActive(eventId, playerId);
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase.from("debile100_player_status").upsert(
+    {
+      event_id: eventId,
+      player_id: playerId,
+      status: "active",
+      eliminated_at_question: progress?.eliminated_at_question ?? null,
+      hint_used_at_question: state.current_question,
+      pass_used_at_question: progress?.pass_used_at_question ?? null,
+      catchup_question_index: progress?.catchup_question_index ?? null,
+      skip_question_index: progress?.skip_question_index ?? null
+    },
+    { onConflict: "event_id,player_id" }
+  );
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return hintText;
+}
+
+export async function submitDebile100Pass(eventId: string, playerId: string) {
+  const state = await getDebile100State(eventId);
+  if (!state || state.phase !== "playing") {
+    throw new Error("Ce n'est pas le moment d'utiliser Passe.");
+  }
+  if (!isPassQuestion(state.current_question)) {
+    throw new Error("Passe disponible uniquement aux questions 12 à 14.");
+  }
+  if (!canSubmitDebile100Answer(state.question_started_at, state.phase)) {
+    throw new Error("Le temps est écoulé — trop tard.");
+  }
+
+  const statuses = await getDebile100PlayerStatuses(eventId);
+  const row = statuses.find((entry) => entry.player_id === playerId);
+  const progress = row ? toDebile100PlayerProgress(row) : null;
+  if (!canUsePass(progress, state.current_question)) {
+    throw new Error("Tu as déjà utilisé Passe (questions 12 à 14).");
+  }
+  if (!shouldPlayerPlayQuestion(progress, state.current_question)) {
+    throw new Error("Tu ne participes pas à cette question.");
+  }
+
+  const existing = await getDebile100AnswersForQuestion(eventId, state.current_question);
+  if (existing.some((entry) => entry.player_id === playerId)) {
+    throw new Error("Tu as déjà répondu.");
+  }
+
+  await ensureDebile100PlayerActive(eventId, playerId);
+  const supabase = getSupabaseAdminClient();
+  const { error: statusError } = await supabase.from("debile100_player_status").upsert(
+    {
+      event_id: eventId,
+      player_id: playerId,
+      status: "active",
+      eliminated_at_question: progress?.eliminated_at_question ?? null,
+      hint_used_at_question: progress?.hint_used_at_question ?? null,
+      pass_used_at_question: state.current_question,
+      catchup_question_index: progress?.catchup_question_index ?? null,
+      skip_question_index: progress?.skip_question_index ?? null
+    },
+    { onConflict: "event_id,player_id" }
+  );
+  if (statusError) {
+    throw new Error(statusError.message);
+  }
+
+  const { error } = await supabase.from("debile100_answers").insert({
+    event_id: eventId,
+    player_id: playerId,
+    question_index: state.current_question,
+    choice_id: DEBILE100_PASS_CHOICE_ID
+  });
+  if (error) {
+    if (error.code === "23505") {
+      throw new Error("Tu as déjà répondu.");
+    }
+    throw new Error(error.message);
+  }
+}
+
+async function clearDebile100SkipBeforeQuestion(eventId: string, questionIndex: number) {
+  const skipToClear = questionIndex === 10 ? 9 : questionIndex === 12 ? 11 : null;
+  if (!skipToClear) {
+    return;
+  }
+  const supabase = getSupabaseAdminClient();
+  const statuses = await getDebile100PlayerStatuses(eventId);
+  for (const row of statuses) {
+    if (row.skip_question_index !== skipToClear) {
+      continue;
+    }
+    await supabase
+      .from("debile100_player_status")
+      .update({ skip_question_index: null })
+      .eq("event_id", eventId)
+      .eq("player_id", row.player_id);
+  }
+}
+
 export async function startDebile100Question(eventId: string, questionIndex: number) {
   if (questionIndex < 1 || questionIndex > DEBILE100_QUESTION_COUNT) {
     throw new Error("Numéro de question invalide.");
@@ -1162,6 +1332,8 @@ export async function startDebile100Question(eventId: string, questionIndex: num
   if (questionIndex === 1) {
     await supabase.from("debile100_player_status").delete().eq("event_id", eventId);
     await supabase.from("debile100_answers").delete().eq("event_id", eventId);
+  } else {
+    await clearDebile100SkipBeforeQuestion(eventId, questionIndex);
   }
 
   const { error } = await supabase.from("debile100_state").upsert(
@@ -1202,22 +1374,28 @@ export async function revealDebile100Question(eventId: string, questionIndex: nu
   const activePlayers = statuses.filter((row) => row.status === "active");
 
   const supabase = getSupabaseAdminClient();
-  const toEliminate = new Set<string>();
 
   for (const row of activePlayers) {
-    const answer = answers.find((entry) => entry.player_id === row.player_id);
-    if (!answer || answer.choice_id !== question.correctChoiceId) {
-      toEliminate.add(row.player_id);
-    }
-  }
+    const progress = toDebile100PlayerProgress(row);
 
-  for (const playerId of toEliminate) {
+    if (isCatchupRetryQuestion(questionIndex) && progress.catchup_question_index !== questionIndex) {
+      continue;
+    }
+
+    const answer = answers.find((entry) => entry.player_id === row.player_id);
+    const choiceId = answer?.choice_id ?? null;
+    const updated = getProgressAfterReveal(progress, questionIndex, choiceId, question.correctChoiceId);
+
     const { error } = await supabase.from("debile100_player_status").upsert(
       {
         event_id: eventId,
-        player_id: playerId,
-        status: "eliminated",
-        eliminated_at_question: questionIndex
+        player_id: row.player_id,
+        status: updated.status,
+        eliminated_at_question: updated.eliminated_at_question,
+        hint_used_at_question: updated.hint_used_at_question,
+        pass_used_at_question: updated.pass_used_at_question,
+        catchup_question_index: updated.catchup_question_index,
+        skip_question_index: updated.skip_question_index
       },
       { onConflict: "event_id,player_id" }
     );

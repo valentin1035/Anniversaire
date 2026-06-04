@@ -3,11 +3,17 @@
 import { useEffect, useRef, useState } from "react";
 import {
   canSubmitDebile100Answer,
+  DEBILE100_PASS_CHOICE_ID,
   DEBILE100_QUESTION_SECONDS,
   DEBILE100_SYNC_GRACE_SECONDS,
   getDebile100TimerState,
   type Debile100Phase
 } from "@/lib/debile100";
+import {
+  isAnswerQualifying,
+  isPassAnswer,
+  type Debile100RevealOutcome
+} from "@/lib/debile100-rules";
 import type { Debile100SyncPayload } from "@/lib/debile100-sync";
 import type { Debile100PlayerView } from "@/lib/debile100-page";
 
@@ -28,26 +34,53 @@ function toGameFromProps(props: Debile100PlayerView): GameState {
     playerStatus: props.playerStatus,
     myChoiceId: props.myChoiceId,
     showQuestion: props.showQuestion,
-    currentQuestionData: props.currentQuestionData
+    currentQuestionData: props.currentQuestionData,
+    viewMode: props.viewMode,
+    waitingMessage: props.waitingMessage,
+    finaleQualified: props.finaleQualified,
+    hintAvailable: props.hintAvailable,
+    hintUsed: props.hintUsed,
+    hintText: props.hintText,
+    passAvailable: props.passAvailable,
+    passUsed: props.passUsed,
+    revealOutcome: props.revealOutcome
   };
 }
 
 function toGameFromPayload(payload: Debile100SyncPayload): GameState {
-  return {
-    questionStartedAt: payload.questionStartedAt,
-    currentQuestion: payload.currentQuestion,
-    phase: payload.phase,
-    playerStatus: payload.playerStatus,
-    myChoiceId: payload.myChoiceId,
-    showQuestion: payload.showQuestion,
-    currentQuestionData: payload.currentQuestionData
-  };
+  const {
+    serverNow: _sn,
+    timerPhase: _tp,
+    secondsRemaining: _sr,
+    graceSecondsRemaining: _gr,
+    ...rest
+  } = payload;
+  return rest;
+}
+
+function verdictMessage(outcome: Debile100RevealOutcome): string | null {
+  switch (outcome) {
+    case "finale":
+      return "Bravo, vous êtes qualifié(e) jusqu'à la finale !";
+    case "qualified":
+      return "Vous êtes qualifiés pour la question suivante.";
+    case "qualified_skip":
+      return "Bonne réponse — vous passez directement à la question suivante.";
+    case "catchup_offer":
+      return "Mauvaise réponse — vous avez une question de rattrapage.";
+    case "pass_ok":
+      return "Passe utilisé — vous êtes qualifié(e) pour la question suivante.";
+    case "eliminated":
+      return "Vous êtes éliminés.";
+    default:
+      return null;
+  }
 }
 
 export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
   const [game, setGame] = useState<GameState>(() => toGameFromProps({ eventId, ...initial }));
+  const [localHintText, setLocalHintText] = useState<string | null>(initial.hintText);
   const clockSkewMsRef = useRef(0);
-  const clockReadyRef = useRef(false);
   const [timer, setTimer] = useState(() =>
     getDebile100TimerState(initial.questionStartedAt, initial.phase)
   );
@@ -57,6 +90,10 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
   function serverNowMs() {
     return Date.now() + clockSkewMsRef.current;
   }
+
+  useEffect(() => {
+    setLocalHintText(game.hintText);
+  }, [game.hintText, game.currentQuestion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,10 +111,9 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
           return;
         }
         clockSkewMsRef.current = payload.serverNow - Date.now();
-        clockReadyRef.current = true;
         setGame(toGameFromPayload(payload));
       } catch {
-        /* ignore réseau ponctuel */
+        /* ignore */
       }
     }
 
@@ -97,7 +133,9 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
 
     function tick() {
       const serverNow = Date.now() + clockSkewMsRef.current;
-      setTimer(getDebile100TimerState(game.questionStartedAt, game.phase as Debile100Phase, serverNow));
+      setTimer(
+        getDebile100TimerState(game.questionStartedAt, game.phase as Debile100Phase, serverNow)
+      );
     }
 
     tick();
@@ -130,6 +168,63 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
     }
   }
 
+  async function useHint() {
+    setError(null);
+    setPending(true);
+    try {
+      const response = await fetch("/api/debile100/hint", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ eventId })
+      });
+      const payload = (await response.json()) as { error?: string; hintText?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Erreur.");
+      }
+      setLocalHintText(payload.hintText ?? null);
+      setGame((prev) => ({
+        ...prev,
+        hintUsed: true,
+        hintAvailable: false,
+        hintText: payload.hintText ?? null
+      }));
+    } catch (hintError) {
+      setError((hintError as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function usePass() {
+    if (!canSubmitDebile100Answer(game.questionStartedAt, game.phase, serverNowMs())) {
+      setError("Le temps est écoulé — trop tard pour utiliser Passe.");
+      return;
+    }
+    setError(null);
+    setPending(true);
+    try {
+      const response = await fetch("/api/debile100/pass", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ eventId })
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Erreur.");
+      }
+      setGame((prev) => ({
+        ...prev,
+        myChoiceId: DEBILE100_PASS_CHOICE_ID,
+        passUsed: true,
+        passAvailable: false
+      }));
+    } catch (passError) {
+      setError((passError as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
   if (!playerPseudo) {
     return (
       <p className="subtitle">
@@ -138,7 +233,7 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
     );
   }
 
-  if (game.playerStatus === "eliminated") {
+  if (game.viewMode === "eliminated" || game.playerStatus === "eliminated") {
     return (
       <div className="debile100Eliminated card">
         <h3>Tu es éliminé</h3>
@@ -147,14 +242,19 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
     );
   }
 
-  if (!game.showQuestion || !game.currentQuestionData) {
+  if (game.viewMode === "waiting" || !game.showQuestion || !game.currentQuestionData) {
     return (
       <div className="debile100Waiting">
+        {game.finaleQualified ? (
+          <p className="ok debile100FinaleBanner">
+            Bravo, vous êtes qualifié(e) jusqu&apos;à la finale !
+          </p>
+        ) : null}
         <p className="subtitle">
-          En attente de la question {game.currentQuestion > 0 ? game.currentQuestion + 1 : 1}…
-          L&apos;organisateur lance le chrono depuis l&apos;admin.
+          {game.waitingMessage ??
+            `En attente de la question ${game.currentQuestion > 0 ? game.currentQuestion + 1 : 1}…`}
         </p>
-        {game.currentQuestion > 0 && game.phase === "revealed" ? (
+        {game.currentQuestion > 0 && game.phase === "revealed" && !game.waitingMessage ? (
           <p className="ok">Dernière question terminée — prépare-toi pour la suite.</p>
         ) : null}
       </div>
@@ -164,18 +264,37 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
   const question = game.currentQuestionData;
   const correctId = question.correctChoiceId;
   const isRevealed = game.phase === "revealed";
-  const isCorrect = game.myChoiceId === correctId;
+  const usedPass = isPassAnswer(game.myChoiceId);
+  const isCorrect = isAnswerQualifying(game.myChoiceId, correctId);
   const inGrace = game.phase === "playing" && timer.timerPhase === "grace";
   const timerRunning = game.phase === "playing" && timer.timerPhase === "running";
   const timerExpired = game.phase === "playing" && timer.timerPhase === "expired";
+  const verdict = verdictMessage(game.revealOutcome);
 
   const canAnswer =
     canSubmitDebile100Answer(game.questionStartedAt, game.phase, serverNowMs()) &&
     !game.myChoiceId &&
     game.playerStatus === "active";
 
+  const showHintButton = game.hintAvailable && !game.hintUsed && !localHintText;
+  const hintDisabled = !showHintButton || pending || inGrace || isRevealed;
+  const passDisabled =
+    !game.passAvailable ||
+    game.passUsed ||
+    pending ||
+    Boolean(game.myChoiceId) ||
+    inGrace ||
+    isRevealed ||
+    !canSubmitDebile100Answer(game.questionStartedAt, game.phase, serverNowMs());
+
   return (
     <div className="debile100Quiz">
+      {game.finaleQualified ? (
+        <p className="ok debile100FinaleBanner">
+          Bravo, vous êtes qualifié(e) jusqu&apos;à la finale !
+        </p>
+      ) : null}
+
       {error ? <p className="error">{error}</p> : null}
 
       <article className="debile100QuestionCard">
@@ -199,56 +318,97 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
           ) : null}
         </header>
 
+        <div className="debile100Powerups">
+          {question.index >= 5 && question.index <= 7 ? (
+            <button
+              type="button"
+              className={
+                showHintButton
+                  ? "beerPongBtnSecondary debile100HintBtn"
+                  : "beerPongBtnSecondary debile100HintBtn debile100PowerupUsed"
+              }
+              disabled={hintDisabled}
+              onClick={() => void useHint()}
+            >
+              {game.hintUsed || localHintText ? "Indice utilisé" : "Indice"}
+            </button>
+          ) : null}
+          {question.index >= 12 && question.index <= 14 ? (
+            <button
+              type="button"
+              className={
+                game.passAvailable && !game.passUsed && !usedPass
+                  ? "beerPongBtnSecondary debile100PassBtn"
+                  : "beerPongBtnSecondary debile100PassBtn debile100PowerupUsed"
+              }
+              disabled={passDisabled}
+              onClick={() => void usePass()}
+            >
+              {game.passUsed || usedPass ? "Passe utilisé" : "Passe"}
+            </button>
+          ) : null}
+        </div>
+
+        {localHintText ? (
+          <p className="debile100HintBox">
+            <strong>Indice :</strong> {localHintText}
+          </p>
+        ) : null}
+
         <h3 className="debile100QuestionText">{question.text}</h3>
 
-        <div className="debile100Choices">
-          {question.choices.map((choice) => {
-            const isMine = game.myChoiceId === choice.id;
-            const isCorrectChoice = choice.id === correctId;
+        {!usedPass ? (
+          <div className="debile100Choices">
+            {question.choices.map((choice) => {
+              const isMine = game.myChoiceId === choice.id;
+              const isCorrectChoice = choice.id === correctId;
 
-            let className = "debile100Choice";
-            if (isRevealed) {
-              if (isCorrectChoice) {
-                className += " debile100ChoiceCorrect";
+              let className = "debile100Choice";
+              if (isRevealed) {
+                if (isCorrectChoice) {
+                  className += " debile100ChoiceCorrect";
+                } else if (isMine) {
+                  className += " debile100ChoiceWrong";
+                } else {
+                  className += " debile100ChoiceMuted";
+                }
               } else if (isMine) {
-                className += " debile100ChoiceWrong";
-              } else {
-                className += " debile100ChoiceMuted";
+                className += " debile100ChoiceSelected";
               }
-            } else if (isMine) {
-              className += " debile100ChoiceSelected";
-            }
 
-            const disabled =
-              pending ||
-              Boolean(game.myChoiceId) ||
-              inGrace ||
-              timerExpired ||
-              isRevealed ||
-              !canAnswer;
+              const disabled =
+                pending ||
+                Boolean(game.myChoiceId) ||
+                inGrace ||
+                timerExpired ||
+                isRevealed ||
+                !canAnswer;
 
-            return (
-              <button
-                key={choice.id}
-                type="button"
-                className={className}
-                disabled={disabled}
-                onClick={() => void submitAnswer(choice.id)}
-              >
-                {choice.label}
-              </button>
-            );
-          })}
-        </div>
+              return (
+                <button
+                  key={choice.id}
+                  type="button"
+                  className={className}
+                  disabled={disabled}
+                  onClick={() => void submitAnswer(choice.id)}
+                >
+                  {choice.label}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="ok">Tu as utilisé Passe — en attente de la fin du chrono.</p>
+        )}
 
         {inGrace ? (
           <p className="subtitle debile100Hint">
             Lis la question — le chrono de {DEBILE100_QUESTION_SECONDS} secondes démarre dans quelques
-            instants ({DEBILE100_SYNC_GRACE_SECONDS} s de synchro pour tout le monde).
+            instants ({DEBILE100_SYNC_GRACE_SECONDS} s de synchro).
           </p>
         ) : null}
 
-        {timerRunning && game.myChoiceId ? (
+        {timerRunning && game.myChoiceId && !usedPass ? (
           <p className="ok">Réponse enregistrée — en attente de la fin du chrono.</p>
         ) : null}
 
@@ -256,32 +416,27 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
           <p className="error">Temps écoulé — tu n&apos;as pas répondu à temps.</p>
         ) : null}
 
-        {timerExpired && game.myChoiceId ? (
-          <p className="subtitle">
-            Temps écoulé — en attente de la correction par l&apos;organisateur.
-          </p>
+        {timerExpired && game.myChoiceId && !isRevealed ? (
+          <p className="subtitle">Temps écoulé — en attente de la correction.</p>
         ) : null}
 
-        {isRevealed && isCorrect ? (
-          <p className="ok debile100Verdict">
-            Vous êtes qualifiés pour la question suivante.
-          </p>
-        ) : null}
-
-        {isRevealed && game.myChoiceId && !isCorrect ? (
-          <p className="error debile100Verdict">Vous êtes éliminés.</p>
-        ) : null}
-
-        {isRevealed && !game.myChoiceId ? (
-          <p className="error debile100Verdict">
-            Pas de réponse — vous êtes éliminés.
+        {isRevealed && verdict ? (
+          <p
+            className={
+              game.revealOutcome === "eliminated"
+                ? "error debile100Verdict"
+                : "ok debile100Verdict"
+            }
+          >
+            {verdict}
           </p>
         ) : null}
       </article>
 
       {timerRunning ? (
         <p className="subtitle debile100Hint">
-          {DEBILE100_QUESTION_SECONDS} secondes pour répondre, un seul clic, sans modification possible.
+          {DEBILE100_QUESTION_SECONDS} secondes pour répondre. Indice (Q5–7) et Passe (Q12–14) : une
+          seule utilisation chacun sur toute la manche.
         </p>
       ) : null}
     </div>

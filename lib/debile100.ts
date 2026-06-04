@@ -1,4 +1,5 @@
-export const DEBILE100_QUESTION_COUNT = 10;
+export const DEBILE100_QUESTION_COUNT = 14;
+export const DEBILE100_PASS_CHOICE_ID = "__PASS__";
 export const DEBILE100_QUESTION_SECONDS = 30;
 /** Délai avant le chrono : le temps que les téléphones reçoivent la question. */
 export const DEBILE100_SYNC_GRACE_SECONDS = 2;
@@ -17,6 +18,8 @@ export type Debile100Choice = {
 export type Debile100Question = {
   index: number;
   text: string;
+  /** Indice (questions 5 à 7), configurable dans l'admin. */
+  hint?: string;
   choices: Debile100Choice[];
   correctChoiceId: string;
 };
@@ -29,6 +32,7 @@ export function createDefaultQuestions(): Debile100Question[] {
     return {
       index,
       text: `Question ${index} — à personnaliser dans l'admin`,
+      hint: index >= 5 && index <= 7 ? `Indice question ${index} — à personnaliser` : undefined,
       choices: [
         { id: "A", label: "Réponse A" },
         { id: "B", label: "Réponse B" },
@@ -67,18 +71,25 @@ export function normalizeQuestions(raw: unknown): Debile100Question[] {
     }
 
     const text = typeof row.text === "string" ? row.text.trim() : base.text;
+    const hintRaw = typeof row.hint === "string" ? row.hint.trim() : base.hint ?? "";
+    const hint = hintRaw || (base.index >= 5 && base.index <= 7 ? base.hint : undefined);
     const correctChoiceId =
       typeof row.correctChoiceId === "string" ? row.correctChoiceId : base.correctChoiceId;
 
     return {
       index: base.index,
       text: text || base.text,
+      hint,
       choices: choices.length >= 2 ? choices : base.choices,
       correctChoiceId: choices.some((c) => c.id === correctChoiceId)
         ? correctChoiceId
         : choices[0]?.id ?? base.correctChoiceId
     };
   });
+}
+
+export function isHintQuestion(index: number): boolean {
+  return index >= 5 && index <= 7;
 }
 
 export function getQuestionByIndex(

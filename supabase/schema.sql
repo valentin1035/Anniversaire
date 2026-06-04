@@ -136,7 +136,7 @@ drop policy if exists golf_debile_submissions_public_select on public.golf_debil
 create policy golf_debile_submissions_public_select on public.golf_debile_submissions
 for select to anon, authenticated using (true);
 
--- 100% Débile : quiz synchronisé (10 questions, 30 s, élimination)
+-- 100% Débile : quiz synchronisé (14 questions, 30 s, élimination + indices / rattrapage / passe)
 create table if not exists public.debile100_state (
   event_id uuid primary key references public.events(id) on delete cascade,
   questions jsonb not null default '[]'::jsonb,
@@ -144,7 +144,7 @@ create table if not exists public.debile100_state (
   phase text not null default 'idle',
   question_started_at timestamptz,
   constraint debile100_state_phase check (phase in ('idle', 'playing', 'revealed')),
-  constraint debile100_state_question_range check (current_question between 0 and 10)
+  constraint debile100_state_question_range check (current_question between 0 and 14)
 );
 
 create table if not exists public.debile100_player_status (
@@ -152,6 +152,10 @@ create table if not exists public.debile100_player_status (
   player_id uuid not null references public.players(id) on delete cascade,
   status text not null default 'active',
   eliminated_at_question int,
+  hint_used_at_question int,
+  pass_used_at_question int,
+  catchup_question_index int,
+  skip_question_index int,
   primary key (event_id, player_id),
   constraint debile100_player_status_value check (status in ('active', 'eliminated'))
 );
@@ -164,8 +168,20 @@ create table if not exists public.debile100_answers (
   choice_id text not null,
   created_at timestamptz not null default now(),
   constraint debile100_answers_unique unique (event_id, player_id, question_index),
-  constraint debile100_answers_question_range check (question_index between 1 and 10)
+  constraint debile100_answers_question_range check (question_index between 1 and 14)
 );
+
+-- Migration si tables créées avec l'ancienne limite à 10 questions
+alter table public.debile100_state drop constraint if exists debile100_state_question_range;
+alter table public.debile100_state add constraint debile100_state_question_range check (current_question between 0 and 14);
+
+alter table public.debile100_answers drop constraint if exists debile100_answers_question_range;
+alter table public.debile100_answers add constraint debile100_answers_question_range check (question_index between 1 and 14);
+
+alter table public.debile100_player_status add column if not exists hint_used_at_question int;
+alter table public.debile100_player_status add column if not exists pass_used_at_question int;
+alter table public.debile100_player_status add column if not exists catchup_question_index int;
+alter table public.debile100_player_status add column if not exists skip_question_index int;
 
 create index if not exists idx_debile100_answers_event on public.debile100_answers(event_id, question_index);
 
