@@ -8,6 +8,9 @@ import {
   isHintQuestion
 } from "@/lib/debile100";
 import type { Debile100Question } from "@/lib/debile100";
+import { Debile100AnswerRecap } from "@/components/debile100-answer-recap";
+import { Debile100Leaderboard } from "@/components/debile100-leaderboard";
+import { Debile100ReinstatePanel } from "@/components/debile100-reinstate-panel";
 import type { Debile100AdminView } from "@/lib/debile100-page";
 
 type Props = Debile100AdminView;
@@ -22,7 +25,12 @@ export function Debile100Admin({
   graceSecondsRemaining,
   answerCounts,
   activeCount,
-  eliminatedCount
+  eliminatedCount,
+  isFinalized,
+  canFinalize,
+  leaderboard,
+  questionRecaps,
+  eliminatedPlayers
 }: Props) {
   const router = useRouter();
   const [draft, setDraft] = useState<Debile100Question[]>(questions);
@@ -30,10 +38,11 @@ export function Debile100Admin({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (phase !== "playing") {
+    if (phase !== "playing" && phase !== "revealed") {
       return;
     }
-    const refreshId = window.setInterval(() => router.refresh(), 1500);
+    const refreshMs = phase === "playing" ? 1500 : 4000;
+    const refreshId = window.setInterval(() => router.refresh(), refreshMs);
     return () => window.clearInterval(refreshId);
   }, [phase, currentQuestion, router]);
 
@@ -225,6 +234,66 @@ export function Debile100Admin({
         >
           Réinitialiser la partie
         </button>
+        {canFinalize ? (
+          <button
+            type="button"
+            className="btnPrimary"
+            disabled={pending}
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Attribuer les points (12 → 1) au classement global selon la survie des joueurs ?"
+                )
+              ) {
+                void apiCall({ action: "finalize" });
+              }
+            }}
+          >
+            Valider le classement et attribuer les points
+          </button>
+        ) : null}
+        {isFinalized ? (
+          <p className="ok">Classement validé — points ajoutés au classement global.</p>
+        ) : null}
+      </section>
+
+      <section className="card">
+        <h3>Réponses des joueurs</h3>
+        <p className="subtitle debile100Hint">
+          Récapitulatif après chaque révélation — dernière question en haut.
+        </p>
+        <Debile100AnswerRecap
+          questionRecaps={questionRecaps}
+          currentQuestion={currentQuestion}
+          phase={phase}
+        />
+      </section>
+
+      <section className="card">
+        <h3>Remettre en jeu</h3>
+        <p className="subtitle debile100Hint">
+          Réintègre un joueur éliminé — il reprend à partir de la question en cours (ou la
+          suivante). Indice et Passe déjà utilisés restent consommés.
+        </p>
+        <Debile100ReinstatePanel
+          eliminatedPlayers={eliminatedPlayers}
+          isFinalized={isFinalized}
+          pending={pending}
+          onReinstate={(playerId, pseudo) => {
+            if (
+              window.confirm(
+                `Remettre ${pseudo} en jeu ? Il pourra rejouer les prochaines questions.`
+              )
+            ) {
+              void apiCall({ action: "reinstate", playerId });
+            }
+          }}
+        />
+      </section>
+
+      <section className="card">
+        <h3>Classement de l&apos;épreuve</h3>
+        <Debile100Leaderboard isFinalized={isFinalized} leaderboard={leaderboard} />
       </section>
     </div>
   );

@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
     }
 
     await submitDebile100Pass(body.eventId, session.playerId);
-    revalidatePath("/epreuves/5");
+    revalidatePath("/epreuves/4");
     revalidatePath("/admin/debile100");
     return NextResponse.json({ ok: true });
   } catch (error) {

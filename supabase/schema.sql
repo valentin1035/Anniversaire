@@ -16,7 +16,7 @@ create table if not exists public.events (
   name text not null,
   order_index int not null unique,
   created_at timestamptz not null default now(),
-  constraint events_order_range check (order_index between 1 and 5)
+  constraint events_order_range check (order_index between 1 and 4)
 );
 
 -- Matches
@@ -65,9 +65,12 @@ create table if not exists public.molkpute_state (
   event_id uuid primary key references public.events(id) on delete cascade,
   draw_player_ids uuid[] not null default '{}',
   matches jsonb not null default '[]'::jsonb,
+  finalized_at timestamptz,
   updated_at timestamptz not null default now(),
   constraint molkpute_state_draw_size check (array_length(draw_player_ids, 1) is null or array_length(draw_player_ids, 1) = 12)
 );
+
+alter table public.molkpute_state add column if not exists finalized_at timestamptz;
 
 -- Fin de partie Molkpute : 1 ligne = 1 joueur qui a clos un match à 50 pts
 create table if not exists public.molkpute_finishes (
@@ -143,9 +146,12 @@ create table if not exists public.debile100_state (
   current_question int not null default 0,
   phase text not null default 'idle',
   question_started_at timestamptz,
+  finalized_at timestamptz,
   constraint debile100_state_phase check (phase in ('idle', 'playing', 'revealed')),
   constraint debile100_state_question_range check (current_question between 0 and 14)
 );
+
+alter table public.debile100_state add column if not exists finalized_at timestamptz;
 
 create table if not exists public.debile100_player_status (
   event_id uuid not null references public.events(id) on delete cascade,
@@ -225,14 +231,45 @@ order by total_points desc, p.pseudo asc;
 update public.players
 set secret_code_hash = encode(digest(pseudo, 'sha256'), 'hex');
 
--- Seed the 5 events once
+-- Migration : retirer Con Battant et passer 100% Débile en épreuve 4
+alter table public.events drop constraint if exists events_order_range;
+update public.events e
+set order_index = sub.temp_order
+from (
+  select id, 10000 + row_number() over (order by order_index, created_at, id) as temp_order
+  from public.events
+) sub
+where e.id = sub.id;
+delete from public.events where name ilike '%con battant%';
+delete from public.events a
+using public.events b
+where a.name = b.name and a.created_at > b.created_at;
+update public.events e
+set order_index = mapping.target_order
+from (
+  values
+    ('Beer Pong Géant', 1),
+    ('Molkpute', 2),
+    ('Golf Débile', 3),
+    ('100% Débile', 4)
+) as mapping(name, target_order)
+join (
+  select distinct on (name) id, name
+  from public.events
+  order by name, created_at, id
+) keeper on keeper.name = mapping.name
+where e.id = keeper.id;
+delete from public.events
+where name not in ('Beer Pong Géant', 'Molkpute', 'Golf Débile', '100% Débile');
+alter table public.events add constraint events_order_range check (order_index between 1 and 4);
+
+-- Seed the 4 events once
 insert into public.events (name, order_index)
 values
   ('Beer Pong Géant', 1),
   ('Molkpute', 2),
   ('Golf Débile', 3),
-  ('Parcours du Con Battant', 4),
-  ('100% Débile', 5)
+  ('100% Débile', 4)
 on conflict (order_index) do update set name = excluded.name;
 
 -- Enable RLS

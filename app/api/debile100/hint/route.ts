@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
     }
 
     const hintText = await claimDebile100Hint(body.eventId, session.playerId);
-    revalidatePath("/epreuves/5");
+    revalidatePath("/epreuves/4");
     return NextResponse.json({ ok: true, hintText });
   } catch (error) {
     return NextResponse.json({ error: (error as Error).message }, { status: 400 });

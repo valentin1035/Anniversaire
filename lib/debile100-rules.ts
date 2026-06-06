@@ -184,20 +184,11 @@ export function resolvePlayerView(
   }
 
   const activeProgress = progress ?? createDefaultDebile100Progress("unknown");
-
-  const finaleQualified = currentQuestion >= 14 && activeProgress.status === "active";
-
-  if (finaleQualified) {
-    return {
-      viewMode: "finale",
-      showQuestion: shouldPlayerPlayQuestion(activeProgress, currentQuestion) && Boolean(question),
-      waitingMessage: null,
-      finaleQualified: true,
-      hintAvailable: false,
-      passAvailable: canUsePass(activeProgress, currentQuestion) && phase === "playing",
-      revealOutcome: getRevealOutcome(currentQuestion, phase, myChoiceId, question, activeProgress)
-    };
-  }
+  const revealOutcome = getRevealOutcome(currentQuestion, phase, myChoiceId, question, activeProgress);
+  const finaleQualified =
+    currentQuestion === 14 &&
+    phase === "revealed" &&
+    revealOutcome === "finale";
 
   const canPlay = shouldPlayerPlayQuestion(activeProgress, currentQuestion);
   const inRound = currentQuestion > 0 && (phase === "playing" || phase === "revealed") && Boolean(question);
@@ -225,7 +216,7 @@ export function resolvePlayerView(
     finaleQualified: false,
     hintAvailable: canUseHint(activeProgress, currentQuestion) && phase === "playing",
     passAvailable: canUsePass(activeProgress, currentQuestion) && phase === "playing",
-    revealOutcome: getRevealOutcome(currentQuestion, phase, myChoiceId, question, activeProgress)
+    revealOutcome
   };
 }
 

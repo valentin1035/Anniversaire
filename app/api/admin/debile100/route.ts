@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-guard";
 import { normalizeQuestions, type Debile100Question } from "@/lib/debile100";
 import {
+  finalizeDebile100Ranking,
+  reinstateDebile100Player,
   resetDebile100,
   revealDebile100Question,
   saveDebile100Questions,
@@ -11,8 +13,9 @@ import {
 
 type Payload = {
   eventId?: string;
-  action?: "save-questions" | "start" | "reveal" | "reset";
+  action?: "save-questions" | "start" | "reveal" | "reset" | "finalize" | "reinstate";
   questionIndex?: number;
+  playerId?: string;
   questions?: Debile100Question[];
 };
 
@@ -42,12 +45,21 @@ export async function POST(request: NextRequest) {
       await revealDebile100Question(payload.eventId, payload.questionIndex);
     } else if (payload.action === "reset") {
       await resetDebile100(payload.eventId);
+    } else if (payload.action === "finalize") {
+      await finalizeDebile100Ranking(payload.eventId);
+    } else if (payload.action === "reinstate") {
+      if (!payload.playerId) {
+        return NextResponse.json({ error: "Joueur requis." }, { status: 400 });
+      }
+      await reinstateDebile100Player(payload.eventId, payload.playerId);
     } else {
       return NextResponse.json({ error: "Action inconnue." }, { status: 400 });
     }
 
-    revalidatePath("/epreuves/5");
+    revalidatePath("/epreuves/4");
     revalidatePath("/admin/debile100");
+    revalidatePath("/classement");
+    revalidatePath("/");
 
     return NextResponse.json({ ok: true });
   } catch (error) {

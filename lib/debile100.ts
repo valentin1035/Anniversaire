@@ -165,3 +165,149 @@ export function canSubmitDebile100Answer(
   const { graceEndMs, answerEndMs } = getDebile100Deadlines(startedAt);
   return nowMs >= graceEndMs && nowMs < answerEndMs + DEBILE100_SUBMIT_LEEWAY_MS;
 }
+
+export const DEBILE100_PLAYER_COUNT = 12;
+
+export type Debile100AnswerRecapResult =
+  | "correct"
+  | "pass"
+  | "wrong"
+  | "no_answer"
+  | "not_playing";
+
+export type Debile100AnswerRecapRow = {
+  playerId: string;
+  pseudo: string;
+  choiceLabel: string | null;
+  result: Debile100AnswerRecapResult;
+};
+
+export type Debile100QuestionRecap = {
+  questionIndex: number;
+  correctChoiceLabel: string;
+  rows: Debile100AnswerRecapRow[];
+};
+
+export function getDebile100RevealedQuestionCount(
+  currentQuestion: number,
+  phase: Debile100Phase
+): number {
+  if (currentQuestion <= 0) {
+    return 0;
+  }
+  if (phase === "revealed") {
+    return currentQuestion;
+  }
+  return currentQuestion - 1;
+}
+
+export type Debile100RankingEntry = {
+  playerId: string;
+  pseudo: string;
+  status: Debile100PlayerStatus;
+  eliminatedAtQuestion: number | null;
+  survivalScore: number;
+};
+
+export type Debile100LeaderboardRow = {
+  rank: number;
+  playerId: string;
+  pseudo: string;
+  status: Debile100PlayerStatus;
+  eliminatedAtQuestion: number | null;
+  survivalScore: number;
+  eventPoints: number | null;
+};
+
+export function computeDebile100SurvivalScore(
+  status: Debile100PlayerStatus,
+  eliminatedAtQuestion: number | null
+): number {
+  if (status === "active") {
+    return DEBILE100_QUESTION_COUNT + 1;
+  }
+  return eliminatedAtQuestion ?? 0;
+}
+
+export function sortDebile100RankingEntries(
+  entries: Debile100RankingEntry[]
+): Debile100RankingEntry[] {
+  return [...entries].sort((a, b) => {
+    if (b.survivalScore !== a.survivalScore) {
+      return b.survivalScore - a.survivalScore;
+    }
+    return a.pseudo.localeCompare(b.pseudo, "fr");
+  });
+}
+
+function sameDebile100TieGroup(a: Debile100RankingEntry, b: Debile100RankingEntry): boolean {
+  return a.survivalScore === b.survivalScore;
+}
+
+/** 12 → 1 points ; ex-aequo = mêmes points. */
+export function computeDebile100EventPoints(
+  entries: Debile100RankingEntry[]
+): Map<string, number> {
+  const sorted = sortDebile100RankingEntries(entries);
+  const pointsByPlayer = new Map<string, number>();
+  let index = 0;
+
+  while (index < sorted.length) {
+    const group: Debile100RankingEntry[] = [sorted[index]];
+    let next = index + 1;
+    while (next < sorted.length && sameDebile100TieGroup(sorted[index], sorted[next])) {
+      group.push(sorted[next]);
+      next += 1;
+    }
+
+    const points = Math.max(1, DEBILE100_PLAYER_COUNT - index);
+    for (const entry of group) {
+      pointsByPlayer.set(entry.playerId, points);
+    }
+    index = next;
+  }
+
+  return pointsByPlayer;
+}
+
+export function buildDebile100Leaderboard(
+  entries: Debile100RankingEntry[],
+  pointsByPlayer: Map<string, number> | null
+): Debile100LeaderboardRow[] {
+  const sorted = sortDebile100RankingEntries(entries);
+  let rank = 0;
+  let index = 0;
+  const rows: Debile100LeaderboardRow[] = [];
+
+  while (index < sorted.length) {
+    const group: Debile100RankingEntry[] = [sorted[index]];
+    let next = index + 1;
+    while (next < sorted.length && sameDebile100TieGroup(sorted[index], sorted[next])) {
+      group.push(sorted[next]);
+      next += 1;
+    }
+
+    rank += 1;
+    for (const entry of group) {
+      rows.push({
+        rank,
+        playerId: entry.playerId,
+        pseudo: entry.pseudo,
+        status: entry.status,
+        eliminatedAtQuestion: entry.eliminatedAtQuestion,
+        survivalScore: entry.survivalScore,
+        eventPoints: pointsByPlayer?.get(entry.playerId) ?? null
+      });
+    }
+    index = next;
+  }
+
+  return rows;
+}
+
+export function canFinalizeDebile100State(state: {
+  current_question: number;
+  phase: Debile100Phase;
+}): boolean {
+  return state.current_question === DEBILE100_QUESTION_COUNT && state.phase === "revealed";
+}

@@ -1,16 +1,20 @@
 import {
+  allMolkputeMatchesCompleted,
+  buildMolkputeLeaderboard,
   buildMolkputePlaceholderTeams,
   buildMolkputeTeamsFromPlayers,
+  computeMolkputeGlobalRanks,
   computePlayerFinishRows,
   computeStandings,
   createRoundRobinMatches,
   normalizeMolkputeMatches,
+  type MolkputeLeaderboardRow,
   type MolkputeMatch,
   type MolkputePlayerFinishRow,
   type MolkputeStanding,
   type MolkputeTeam
 } from "@/lib/molkpute";
-import { getMolkputeFinishCounts, getMolkputeState, getPlayers } from "@/lib/data";
+import { getEventRanking, getMolkputeFinishCounts, getMolkputeState, getPlayers } from "@/lib/data";
 
 export type MolkputeViewData = {
   teams: MolkputeTeam[];
@@ -18,6 +22,9 @@ export type MolkputeViewData = {
   standings: MolkputeStanding[];
   playerFinishes: MolkputePlayerFinishRow[];
   hasDraw: boolean;
+  isFinalized: boolean;
+  allMatchesCompleted: boolean;
+  leaderboard: MolkputeLeaderboardRow[];
 };
 
 export async function loadMolkputeView(eventId: string): Promise<MolkputeViewData> {
@@ -32,7 +39,10 @@ export async function loadMolkputeView(eventId: string): Promise<MolkputeViewDat
       matches: emptyMatches,
       standings: computeStandings(emptyTeams, emptyMatches),
       playerFinishes: computePlayerFinishRows(emptyTeams, {}),
-      hasDraw: false
+      hasDraw: false,
+      isFinalized: false,
+      allMatchesCompleted: false,
+      leaderboard: []
     };
   }
 
@@ -48,19 +58,34 @@ export async function loadMolkputeView(eventId: string): Promise<MolkputeViewDat
       matches: emptyMatches,
       standings: computeStandings(emptyTeams, emptyMatches),
       playerFinishes: computePlayerFinishRows(emptyTeams, {}),
-      hasDraw: false
+      hasDraw: false,
+      isFinalized: false,
+      allMatchesCompleted: false,
+      leaderboard: []
     };
   }
 
   const teams = buildMolkputeTeamsFromPlayers(selectedPlayers);
   const matches = normalizeMolkputeMatches(state?.matches ?? []);
   const finishCounts = await getMolkputeFinishCounts(eventId);
+  const standings = computeStandings(teams, matches);
+  const ranks = computeMolkputeGlobalRanks(teams, standings, finishCounts);
+  const isFinalized = Boolean(state?.finalized_at);
+  let pointsByPlayer: Map<string, number> | null = null;
+
+  if (isFinalized) {
+    const ranking = await getEventRanking(eventId);
+    pointsByPlayer = new Map(ranking.map((row) => [row.player_id, row.total_points]));
+  }
 
   return {
     teams,
     matches,
-    standings: computeStandings(teams, matches),
+    standings,
     playerFinishes: computePlayerFinishRows(teams, finishCounts),
-    hasDraw: true
+    hasDraw: true,
+    isFinalized,
+    allMatchesCompleted: allMolkputeMatchesCompleted(matches),
+    leaderboard: buildMolkputeLeaderboard(ranks, pointsByPlayer)
   };
 }

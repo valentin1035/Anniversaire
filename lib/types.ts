@@ -46,6 +46,7 @@ export type MolkputeState = {
   event_id: string;
   draw_player_ids: string[];
   matches: unknown;
+  finalized_at: string | null;
 };
 
 export type GolfDebileState = {
@@ -59,6 +60,7 @@ export type Debile100State = {
   current_question: number;
   phase: "idle" | "playing" | "revealed";
   question_started_at: string | null;
+  finalized_at: string | null;
 };
 
 export type BeerPongState = {

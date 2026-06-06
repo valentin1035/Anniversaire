@@ -13,7 +13,7 @@ export default async function AdminDebile100Page() {
     redirect("/admin");
   }
 
-  const eventItem = await getEventByOrder(5);
+  const eventItem = await getEventByOrder(4);
   if (!eventItem) {
     redirect("/admin");
   }
@@ -27,13 +27,13 @@ export default async function AdminDebile100Page() {
         <p className="subtitle">
           14 questions — 2 s de synchro puis 30 s pour répondre. Indices (Q5–7), rattrapage
           (Q8–11), Passe (Q12–14). Affiche la réponse quand tu veux. Joueurs :{" "}
-          <Link href="/epreuves/5">/epreuves/5</Link>.
+          <Link href="/epreuves/4">/epreuves/4</Link>.
         </p>
         <div className="beerPongActions">
           <Link href="/admin" className="beerPongBtnSecondary">
             ← Retour admin
           </Link>
-          <Link href="/epreuves/5" className="beerPongBtnSecondary">
+          <Link href="/epreuves/4" className="beerPongBtnSecondary">
             Voir la page joueurs
           </Link>
         </div>

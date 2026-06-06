@@ -89,7 +89,7 @@ export default async function HomePage({ searchParams }: HomeProps) {
 
       <section className="infoHeroCard glassCard pulseGlow">
         <p className="infoHeroText">
-          5 défis, <span>1 seul champion.</span>
+          4 défis, <span>1 seul champion.</span>
         </p>
         <p className="infoHeroTagline">
           Affrontes tes potes plus débiles les uns que les autres et grimpe au classement

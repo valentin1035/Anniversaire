@@ -400,4 +400,98 @@ export function resetMolkputeMatchState(match: MolkputeMatch): MolkputeMatch {
   return createEmptyMatch(match.teamA, match.teamB);
 }
 
+export type MolkputeGlobalRank = {
+  playerId: string;
+  pseudo: string;
+  teamKey: MolkputeTeamKey;
+  teamRank: number;
+  globalRank: number;
+  finishCount: number;
+};
+
+export type MolkputeLeaderboardRow = {
+  rank: number;
+  playerId: string;
+  pseudo: string;
+  teamKey: MolkputeTeamKey;
+  teamRank: number;
+  finishCount: number;
+  eventPoints: number | null;
+};
+
+export function allMolkputeMatchesCompleted(matches: MolkputeMatch[]): boolean {
+  const expected = createRoundRobinMatches().length;
+  return matches.length >= expected && matches.every((match) => match.completed);
+}
+
+/** Classement individuel : rang équipe (victoires poule) puis finisseurs dans l'équipe. */
+export function computeMolkputeGlobalRanks(
+  teams: MolkputeTeam[],
+  standings: MolkputeStanding[],
+  finishCounts: Record<string, number>
+): MolkputeGlobalRank[] {
+  const results: MolkputeGlobalRank[] = [];
+
+  for (const standing of standings) {
+    const team = teams.find((entry) => entry.key === standing.teamKey);
+    if (!team) {
+      continue;
+    }
+
+    const baseGlobalRank = (standing.rank - 1) * MOLKPUTE_PLAYERS_PER_TEAM + 1;
+    const players = team.playerIds.map((playerId, index) => ({
+      playerId,
+      pseudo: team.players[index],
+      finishCount: finishCounts[playerId] ?? 0
+    }));
+
+    players.sort((a, b) => {
+      if (b.finishCount !== a.finishCount) {
+        return b.finishCount - a.finishCount;
+      }
+      return a.pseudo.localeCompare(b.pseudo, "fr");
+    });
+
+    for (let offset = 0; offset < players.length; offset += 1) {
+      const player = players[offset];
+      results.push({
+        playerId: player.playerId,
+        pseudo: player.pseudo,
+        teamKey: standing.teamKey,
+        teamRank: standing.rank,
+        globalRank: baseGlobalRank + offset,
+        finishCount: player.finishCount
+      });
+    }
+  }
+
+  return results.sort((a, b) => a.globalRank - b.globalRank);
+}
+
+/** 12 → 1 points selon le rang individuel. */
+export function computeMolkputeEventPoints(
+  ranks: MolkputeGlobalRank[]
+): Map<string, number> {
+  const pointsByPlayer = new Map<string, number>();
+  for (const row of ranks) {
+    pointsByPlayer.set(row.playerId, Math.max(1, MOLKPUTE_PLAYER_COUNT - row.globalRank + 1));
+  }
+  return pointsByPlayer;
+}
+
+export function buildMolkputeLeaderboard(
+  ranks: MolkputeGlobalRank[],
+  pointsByPlayer: Map<string, number> | null
+): MolkputeLeaderboardRow[] {
+  return ranks.map((row) => ({
+    rank: row.globalRank,
+    playerId: row.playerId,
+    pseudo: row.pseudo,
+    teamKey: row.teamKey,
+    teamRank: row.teamRank,
+    finishCount: row.finishCount,
+    eventPoints: pointsByPlayer?.get(row.playerId) ?? null
+  }));
+}
+
 export { shuffleArray };

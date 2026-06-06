@@ -116,7 +116,9 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
     getDebile100TimerState(initial.questionStartedAt, initial.phase)
   );
   const [pending, setPending] = useState(false);
+  const [optimisticChoiceId, setOptimisticChoiceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const selectedChoiceId = game.myChoiceId ?? optimisticChoiceId;
 
   function serverNowMs() {
     return Date.now() + clockSkewMsRef.current;
@@ -125,6 +127,10 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
   useEffect(() => {
     setLocalHintText(game.hintText);
   }, [game.hintText, game.currentQuestion]);
+
+  useEffect(() => {
+    setOptimisticChoiceId(null);
+  }, [game.currentQuestion, game.phase]);
 
   useEffect(() => {
     let cancelled = false;
@@ -180,6 +186,7 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
       return;
     }
     setError(null);
+    setOptimisticChoiceId(choiceId);
     setPending(true);
     try {
       const response = await fetch("/api/debile100/answer", {
@@ -192,7 +199,9 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
         throw new Error(payload.error ?? "Erreur.");
       }
       setGame((prev) => ({ ...prev, myChoiceId: choiceId }));
+      setOptimisticChoiceId(null);
     } catch (submitError) {
+      setOptimisticChoiceId(null);
       setError((submitError as Error).message);
     } finally {
       setPending(false);
@@ -276,11 +285,6 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
   if (game.viewMode === "waiting" || !game.showQuestion || !game.currentQuestionData) {
     return (
       <div className="debile100Waiting">
-        {game.finaleQualified ? (
-          <p className="ok debile100FinaleBanner">
-            Bravo, vous êtes qualifié(e) jusqu&apos;à la finale !
-          </p>
-        ) : null}
         <p className="subtitle">
           {game.waitingMessage ??
             (game.phase === "playing" && game.currentQuestion > 0
@@ -304,7 +308,7 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
 
   const canAnswer =
     canSubmitDebile100Answer(game.questionStartedAt, game.phase, serverNowMs()) &&
-    !game.myChoiceId &&
+    !selectedChoiceId &&
     game.playerStatus === "active";
 
   const showHintButton = game.hintAvailable && !game.hintUsed && !localHintText;
@@ -313,19 +317,16 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
     !game.passAvailable ||
     game.passUsed ||
     pending ||
-    Boolean(game.myChoiceId) ||
+    Boolean(selectedChoiceId) ||
     inGrace ||
     isRevealed ||
     !canSubmitDebile100Answer(game.questionStartedAt, game.phase, serverNowMs());
 
+  const showFinaleQualification =
+    question.index === 14 && isRevealed && game.revealOutcome === "finale";
+
   return (
     <div className="debile100Quiz">
-      {game.finaleQualified ? (
-        <p className="ok debile100FinaleBanner">
-          Bravo, vous êtes qualifié(e) jusqu&apos;à la finale !
-        </p>
-      ) : null}
-
       {error ? <p className="error">{error}</p> : null}
 
       <article className="debile100QuestionCard">
@@ -391,7 +392,7 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
         {!usedPass ? (
           <div className="debile100Choices">
             {question.choices.map((choice) => {
-              const isMine = game.myChoiceId === choice.id;
+              const isMine = selectedChoiceId === choice.id;
               const isCorrectChoice = choice.id === correctId;
 
               let className = "debile100Choice";
@@ -409,7 +410,7 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
 
               const disabled =
                 pending ||
-                Boolean(game.myChoiceId) ||
+                Boolean(selectedChoiceId) ||
                 inGrace ||
                 timerExpired ||
                 isRevealed ||
@@ -439,19 +440,25 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
           </p>
         ) : null}
 
-        {timerRunning && game.myChoiceId && !usedPass ? (
+        {timerRunning && selectedChoiceId && !usedPass ? (
           <p className="ok">Réponse enregistrée — en attente de la fin du chrono.</p>
         ) : null}
 
-        {timerExpired && !game.myChoiceId ? (
+        {timerExpired && !selectedChoiceId ? (
           <p className="error">Temps écoulé — tu n&apos;as pas répondu à temps.</p>
         ) : null}
 
-        {timerExpired && game.myChoiceId && !isRevealed ? (
+        {timerExpired && selectedChoiceId && !isRevealed ? (
           <p className="subtitle">Temps écoulé — en attente de la correction.</p>
         ) : null}
 
-        {isRevealed && verdict ? (
+        {showFinaleQualification ? (
+          <p className="debile100FinaleQualification">
+            Vous êtes qualifié pour la phase finale
+          </p>
+        ) : null}
+
+        {isRevealed && verdict && !showFinaleQualification ? (
           <p
             className={
               game.revealOutcome === "eliminated"

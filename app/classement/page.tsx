@@ -8,7 +8,7 @@ export default async function ClassementPage() {
     <main className="grid">
       <section className="card">
         <h1 className="title">Classement global</h1>
-        <p className="subtitle">Somme des points sur les 5 épreuves.</p>
+        <p className="subtitle">Somme des points sur les 4 épreuves.</p>
       </section>
       <section className="card">
         {ranking.length === 0 ? (

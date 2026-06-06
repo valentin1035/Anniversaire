@@ -8,6 +8,7 @@ import {
   MOLKPUTE_WIN_SCORE,
   getTeamFinishRanking,
   teamScore,
+  type MolkputeLeaderboardRow,
   type MolkputeMatch,
   type MolkputePlayerFinishRow,
   type MolkputeStanding,
@@ -24,6 +25,9 @@ type Props = {
   hasDraw: boolean;
   playerTeamKey: MolkputeTeamKey | null;
   playerPseudo: string | null;
+  isFinalized?: boolean;
+  allMatchesCompleted?: boolean;
+  leaderboard?: MolkputeLeaderboardRow[];
   adminMode?: boolean;
   spectatorSync?: boolean;
 };
@@ -53,6 +57,9 @@ export function MolkputePool({
   hasDraw,
   playerTeamKey,
   playerPseudo,
+  isFinalized = false,
+  allMatchesCompleted = false,
+  leaderboard = [],
   adminMode = false,
   spectatorSync = false
 }: Props) {
@@ -166,6 +173,36 @@ export function MolkputePool({
       router.refresh();
     } catch (finisherError) {
       setError((finisherError as Error).message);
+    } finally {
+      setPendingMatchId(null);
+    }
+  }
+
+  async function finalizeRanking() {
+    if (
+      !window.confirm(
+        "Valider le classement individuel et attribuer les points (12 → 1) au classement global ?"
+      )
+    ) {
+      return;
+    }
+
+    setError(null);
+    setPendingMatchId("__finalize__");
+
+    try {
+      const response = await fetch("/api/admin/molkpute-state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ eventId, action: "finalize" })
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Erreur lors de la validation.");
+      }
+      router.refresh();
+    } catch (finalizeError) {
+      setError((finalizeError as Error).message);
     } finally {
       setPendingMatchId(null);
     }
@@ -288,6 +325,56 @@ export function MolkputePool({
             ))}
           </tbody>
         </table>
+      </section>
+
+      <section className="molkputeStandings">
+        <h3>
+          Classement individuel{" "}
+          {isFinalized ? "(points attribués)" : "(provisoire — rang équipe puis finisseurs)"}
+        </h3>
+        {leaderboard.length > 0 ? (
+          <div className="tableWrap">
+            <table className="molkputeTable">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Joueur</th>
+                  <th>Équipe</th>
+                  <th>Fin.</th>
+                  {isFinalized ? <th>Pts</th> : null}
+                </tr>
+              </thead>
+              <tbody>
+                {leaderboard.map((row) => (
+                  <tr key={row.playerId}>
+                    <td>{row.rank}</td>
+                    <td>{row.pseudo}</td>
+                    <td>
+                      {row.teamRank}e ({row.teamKey})
+                    </td>
+                    <td>{row.finishCount}</td>
+                    {isFinalized ? <td>{row.eventPoints ?? "—"}</td> : null}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="subtitle">En attente du tirage.</p>
+        )}
+        {adminMode && allMatchesCompleted && !isFinalized ? (
+          <button
+            type="button"
+            className="btnPrimary"
+            disabled={pendingMatchId !== null}
+            onClick={() => void finalizeRanking()}
+          >
+            Valider et attribuer les points
+          </button>
+        ) : null}
+        {isFinalized ? (
+          <p className="ok molkputeHint">Classement validé — points ajoutés au classement global.</p>
+        ) : null}
       </section>
 
       <section className="molkputeStandings">

@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
   revalidatePath("/epreuves/3");
   revalidatePath("/admin/golf-debile");
   revalidatePath("/admin/debile100");
-  revalidatePath("/epreuves/5");
+  revalidatePath("/epreuves/4");
   revalidatePath("/");
   return response;
 }

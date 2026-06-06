@@ -1,7 +1,11 @@
 import { buildBeerPongTeamsFromPlayers } from "@/lib/beer-pong";
 import {
+  allMolkputeMatchesCompleted,
   applyMolkputeFinisher,
   buildMolkputeTeamsFromPlayers,
+  computeMolkputeEventPoints,
+  computeMolkputeGlobalRanks,
+  computeStandings,
   createRoundRobinMatches,
   findPlayerTeam,
   normalizeMolkputeMatches,
@@ -22,6 +26,9 @@ import {
 import { hashSecretCode } from "@/lib/auth";
 import { getSupabaseAdminClient, getSupabasePublicClient } from "@/lib/supabase";
 import {
+  canFinalizeDebile100State,
+  computeDebile100EventPoints,
+  computeDebile100SurvivalScore,
   createDefaultQuestions,
   DEBILE100_QUESTION_COUNT,
   canSubmitDebile100Answer,
@@ -30,7 +37,8 @@ import {
   isQuestionTimerExpired,
   normalizeQuestions,
   type Debile100Phase,
-  type Debile100Question
+  type Debile100Question,
+  type Debile100RankingEntry
 } from "@/lib/debile100";
 import {
   canUseHint,
@@ -608,24 +616,48 @@ export async function validateBeerPongIndividual(eventId: string) {
   }
 }
 
+function isMissingColumnError(message: string, column: string) {
+  return message.includes(column) && message.includes("schema cache");
+}
+
 export async function getMolkputeState(eventId: string) {
   const supabase = getSupabasePublicClient();
+  const withFinalized = await supabase
+    .from("molkpute_state")
+    .select("event_id,draw_player_ids,matches,finalized_at")
+    .eq("event_id", eventId)
+    .maybeSingle<MolkputeState>();
+
+  if (!withFinalized.error) {
+    if (!withFinalized.data) {
+      return null;
+    }
+    return {
+      ...withFinalized.data,
+      matches: normalizeMolkputeMatches(withFinalized.data.matches)
+    };
+  }
+
+  if (!isMissingColumnError(withFinalized.error.message, "finalized_at")) {
+    throw new Error(withFinalized.error.message);
+  }
+
   const { data, error } = await supabase
     .from("molkpute_state")
     .select("event_id,draw_player_ids,matches")
     .eq("event_id", eventId)
-    .maybeSingle<MolkputeState>();
+    .maybeSingle<Pick<MolkputeState, "event_id" | "draw_player_ids" | "matches">>();
 
   if (error) {
     throw new Error(error.message);
   }
-
   if (!data) {
     return null;
   }
 
   return {
     ...data,
+    finalized_at: null,
     matches: normalizeMolkputeMatches(data.matches)
   };
 }
@@ -635,16 +667,21 @@ export async function saveMolkputeDraw(eventId: string, drawPlayerIds: string[])
     throw new Error("Le tirage Molkpute doit contenir exactement 12 joueurs.");
   }
 
+  await clearMolkputeEventScores(eventId);
+
   const supabase = getSupabaseAdminClient();
-  const { error } = await supabase.from("molkpute_state").upsert(
-    {
-      event_id: eventId,
-      draw_player_ids: drawPlayerIds,
-      matches: createRoundRobinMatches(),
-      updated_at: new Date().toISOString()
-    },
-    { onConflict: "event_id" }
-  );
+  const payload = {
+    event_id: eventId,
+    draw_player_ids: drawPlayerIds,
+    matches: createRoundRobinMatches(),
+    finalized_at: null,
+    updated_at: new Date().toISOString()
+  };
+  let { error } = await supabase.from("molkpute_state").upsert(payload, { onConflict: "event_id" });
+  if (error && isMissingColumnError(error.message, "finalized_at")) {
+    const { finalized_at: _ignored, ...withoutFinalized } = payload;
+    ({ error } = await supabase.from("molkpute_state").upsert(withoutFinalized, { onConflict: "event_id" }));
+  }
 
   if (error) {
     throw new Error(error.message);
@@ -804,6 +841,8 @@ export async function setMolkputeMatchFinisher(
   if (finishError) {
     throw new Error(finishError.message);
   }
+
+  await tryAutoFinalizeMolkputeRanking(eventId);
 }
 
 export async function resetMolkputeMatch(eventId: string, matchId: string) {
@@ -832,6 +871,91 @@ export async function resetMolkputeMatch(eventId: string, matchId: string) {
   if (error) {
     throw new Error(error.message);
   }
+
+  const currentState = await getMolkputeState(eventId);
+  if (currentState?.finalized_at) {
+    const supabaseState = getSupabaseAdminClient();
+    await supabaseState
+      .from("molkpute_state")
+      .update({ finalized_at: null })
+      .eq("event_id", eventId);
+    await clearMolkputeEventScores(eventId);
+  }
+}
+
+async function clearMolkputeEventScores(eventId: string) {
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase.from("scores").delete().eq("event_id", eventId);
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+async function loadMolkputeRankingData(eventId: string) {
+  const { state, teams } = await loadMolkputeTeamsForEvent(eventId);
+  const matches = normalizeMolkputeMatches(state.matches);
+  const finishCounts = await getMolkputeFinishCounts(eventId);
+  const standings = computeStandings(teams, matches);
+  const ranks = computeMolkputeGlobalRanks(teams, standings, finishCounts);
+  return { state, teams, matches, standings, finishCounts, ranks };
+}
+
+export async function tryAutoFinalizeMolkputeRanking(eventId: string) {
+  const state = await getMolkputeState(eventId);
+  if (!state?.draw_player_ids.length || state.finalized_at) {
+    return;
+  }
+
+  const matches = normalizeMolkputeMatches(state.matches);
+  if (!allMolkputeMatchesCompleted(matches)) {
+    return;
+  }
+
+  await finalizeMolkputeRanking(eventId);
+}
+
+export async function finalizeMolkputeRanking(eventId: string) {
+  const { state, matches, ranks } = await loadMolkputeRankingData(eventId);
+
+  if (state.finalized_at) {
+    throw new Error("Le classement Molkpute est déjà validé.");
+  }
+  if (!allMolkputeMatchesCompleted(matches)) {
+    throw new Error("Tous les matchs de la poule doivent être terminés avant de valider.");
+  }
+  if (ranks.length !== 12) {
+    throw new Error("Impossible de calculer le classement des 12 joueurs.");
+  }
+
+  await clearMolkputeEventScores(eventId);
+  const pointsByPlayer = computeMolkputeEventPoints(ranks);
+  for (const [playerId, points] of pointsByPlayer) {
+    await addScore(eventId, playerId, points);
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase
+    .from("molkpute_state")
+    .update({ finalized_at: new Date().toISOString() })
+    .eq("event_id", eventId);
+
+  if (error && !isMissingColumnError(error.message, "finalized_at")) {
+    throw new Error(error.message);
+  }
+}
+
+export async function resetMolkputeRanking(eventId: string) {
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase
+    .from("molkpute_state")
+    .update({ finalized_at: null })
+    .eq("event_id", eventId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  await clearMolkputeEventScores(eventId);
 }
 
 async function clearGolfDebileEventScores(eventId: string) {
@@ -980,22 +1104,44 @@ export async function resetGolfDebile(eventId: string) {
 
 export async function getDebile100State(eventId: string) {
   const supabase = getSupabasePublicClient();
+  const withFinalized = await supabase
+    .from("debile100_state")
+    .select("event_id,questions,current_question,phase,question_started_at,finalized_at")
+    .eq("event_id", eventId)
+    .maybeSingle<Debile100State>();
+
+  if (!withFinalized.error) {
+    if (!withFinalized.data) {
+      return null;
+    }
+    return {
+      ...withFinalized.data,
+      questions: normalizeQuestions(withFinalized.data.questions)
+    };
+  }
+
+  if (!isMissingColumnError(withFinalized.error.message, "finalized_at")) {
+    throw new Error(withFinalized.error.message);
+  }
+
   const { data, error } = await supabase
     .from("debile100_state")
     .select("event_id,questions,current_question,phase,question_started_at")
     .eq("event_id", eventId)
-    .maybeSingle<Debile100State>();
+    .maybeSingle<
+      Pick<Debile100State, "event_id" | "questions" | "current_question" | "phase" | "question_started_at">
+    >();
 
   if (error) {
     throw new Error(error.message);
   }
-
   if (!data) {
     return null;
   }
 
   return {
     ...data,
+    finalized_at: null,
     questions: normalizeQuestions(data.questions)
   };
 }
@@ -1114,6 +1260,25 @@ export async function getDebile100AnswersForQuestion(eventId: string, questionIn
     .select("player_id,choice_id,question_index")
     .eq("event_id", eventId)
     .eq("question_index", questionIndex);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+  return data ?? [];
+}
+
+export async function getDebile100AnswersUpToQuestion(eventId: string, maxQuestionIndex: number) {
+  if (maxQuestionIndex <= 0) {
+    return [];
+  }
+
+  const supabase = getSupabasePublicClient();
+  const { data, error } = await supabase
+    .from("debile100_answers")
+    .select("player_id,choice_id,question_index")
+    .eq("event_id", eventId)
+    .lte("question_index", maxQuestionIndex)
+    .order("question_index", { ascending: true });
 
   if (error) {
     throw new Error(error.message);
@@ -1510,6 +1675,121 @@ export async function revealDebile100Question(eventId: string, questionIndex: nu
   if (error) {
     throw new Error(error.message);
   }
+
+  if (questionIndex === DEBILE100_QUESTION_COUNT) {
+    await tryAutoFinalizeDebile100Ranking(eventId);
+  }
+}
+
+export async function reinstateDebile100Player(eventId: string, playerId: string) {
+  const state = await getDebile100State(eventId);
+  if (!state) {
+    throw new Error("État 100 % Débile introuvable.");
+  }
+  if (state.finalized_at) {
+    throw new Error("Impossible après validation du classement.");
+  }
+
+  const statuses = await getDebile100PlayerStatuses(eventId);
+  const row = statuses.find((entry) => entry.player_id === playerId);
+  if (!row || row.status !== "eliminated") {
+    throw new Error("Ce joueur n'est pas éliminé.");
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase.from("debile100_player_status").upsert(
+    {
+      event_id: eventId,
+      player_id: playerId,
+      status: "active",
+      eliminated_at_question: null,
+      hint_used_at_question: row.hint_used_at_question,
+      pass_used_at_question: row.pass_used_at_question,
+      catchup_question_index: null,
+      skip_question_index: null
+    },
+    { onConflict: "event_id,player_id" }
+  );
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+async function clearDebile100EventScores(eventId: string) {
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase.from("scores").delete().eq("event_id", eventId);
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function getDebile100RankingEntries(eventId: string): Promise<Debile100RankingEntry[]> {
+  const [statuses, players] = await Promise.all([
+    getDebile100PlayerStatuses(eventId),
+    getPlayers()
+  ]);
+  const pseudoById = new Map(players.map((player) => [player.id, player.pseudo]));
+
+  return statuses.map((row) => {
+    const status = row.status === "eliminated" ? "eliminated" : "active";
+    const eliminatedAtQuestion = row.eliminated_at_question;
+    return {
+      playerId: row.player_id,
+      pseudo: pseudoById.get(row.player_id) ?? "?",
+      status,
+      eliminatedAtQuestion,
+      survivalScore: computeDebile100SurvivalScore(status, eliminatedAtQuestion)
+    };
+  });
+}
+
+export async function tryAutoFinalizeDebile100Ranking(eventId: string) {
+  const state = await getDebile100State(eventId);
+  if (!state || state.finalized_at || !canFinalizeDebile100State(state)) {
+    return;
+  }
+
+  const entries = await getDebile100RankingEntries(eventId);
+  if (entries.length === 0) {
+    return;
+  }
+
+  await finalizeDebile100Ranking(eventId);
+}
+
+export async function finalizeDebile100Ranking(eventId: string) {
+  const state = await getDebile100State(eventId);
+  if (!state) {
+    throw new Error("État 100 % Débile introuvable.");
+  }
+  if (state.finalized_at) {
+    throw new Error("Le classement 100 % Débile est déjà validé.");
+  }
+  if (!canFinalizeDebile100State(state)) {
+    throw new Error("Affiche d'abord la réponse de la question 14.");
+  }
+
+  const entries = await getDebile100RankingEntries(eventId);
+  if (entries.length === 0) {
+    throw new Error("Aucun participant à classer.");
+  }
+
+  await clearDebile100EventScores(eventId);
+  const pointsByPlayer = computeDebile100EventPoints(entries);
+  for (const [playerId, points] of pointsByPlayer) {
+    await addScore(eventId, playerId, points);
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase
+    .from("debile100_state")
+    .update({ finalized_at: new Date().toISOString() })
+    .eq("event_id", eventId);
+
+  if (error && !isMissingColumnError(error.message, "finalized_at")) {
+    throw new Error(error.message);
+  }
 }
 
 export async function resetDebile100(eventId: string) {
@@ -1517,13 +1797,15 @@ export async function resetDebile100(eventId: string) {
   const supabase = getSupabaseAdminClient();
   await supabase.from("debile100_answers").delete().eq("event_id", eventId);
   await supabase.from("debile100_player_status").delete().eq("event_id", eventId);
+  await clearDebile100EventScores(eventId);
   await supabase.from("debile100_state").upsert(
     {
       event_id: eventId,
       questions: state?.questions ?? createDefaultQuestions(),
       current_question: 0,
       phase: "idle",
-      question_started_at: null
+      question_started_at: null,
+      finalized_at: null
     },
     { onConflict: "event_id" }
   );

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { BeerPongBracket } from "@/components/beer-pong-bracket";
 import { MatchTable } from "@/components/match-table";
+import { Debile100Leaderboard } from "@/components/debile100-leaderboard";
 import { Debile100Quiz } from "@/components/debile100-quiz";
 import { GolfDebileBoard } from "@/components/golf-debile-board";
 import { MolkputePool } from "@/components/molkpute-pool";
@@ -8,7 +9,7 @@ import { RankingTable } from "@/components/ranking-table";
 import { getPlayerSession } from "@/lib/auth";
 import { loadBeerPongView } from "@/lib/beer-pong-page";
 import { loadGolfDebileView } from "@/lib/golf-debile-page";
-import { loadDebile100PlayerView } from "@/lib/debile100-page";
+import { loadDebile100PlayerView, loadDebile100PublicLeaderboard } from "@/lib/debile100-page";
 import {
   getEventByOrder,
   getEventMatches,
@@ -29,7 +30,7 @@ export default async function EpreuvePage({ params, searchParams }: Props) {
   const { order } = await params;
   const paramsQuery = (await searchParams) ?? {};
   const orderNumber = Number(order);
-  if (!Number.isInteger(orderNumber) || orderNumber < 1 || orderNumber > 5) {
+  if (!Number.isInteger(orderNumber) || orderNumber < 1 || orderNumber > 4) {
     notFound();
   }
 
@@ -46,7 +47,7 @@ export default async function EpreuvePage({ params, searchParams }: Props) {
   const isBeerPong = eventItem.order_index === 1;
   const isMolkpute = eventItem.order_index === 2;
   const isGolfDebile = eventItem.order_index === 3;
-  const isDebile100 = eventItem.order_index === 5;
+  const isDebile100 = eventItem.order_index === 4;
   const success = typeof paramsQuery.success === "string" ? paramsQuery.success : undefined;
   const error = typeof paramsQuery.error === "string" ? paramsQuery.error : undefined;
 
@@ -62,9 +63,12 @@ export default async function EpreuvePage({ params, searchParams }: Props) {
     ? await loadGolfDebileView(eventItem.id, playerSession?.playerId ?? null)
     : null;
 
-  const debile100View = isDebile100
-    ? await loadDebile100PlayerView(eventItem.id, playerSession?.playerId ?? null)
-    : null;
+  const [debile100View, debile100Leaderboard] = isDebile100
+    ? await Promise.all([
+        loadDebile100PlayerView(eventItem.id, playerSession?.playerId ?? null),
+        loadDebile100PublicLeaderboard(eventItem.id)
+      ])
+    : [null, null];
 
   const playerTeamKey =
     molkputeView && playerSession
@@ -122,6 +126,9 @@ export default async function EpreuvePage({ params, searchParams }: Props) {
             hasDraw={molkputeView.hasDraw}
             playerTeamKey={playerTeamKey}
             playerPseudo={playerSession?.pseudo ?? null}
+            isFinalized={molkputeView.isFinalized}
+            allMatchesCompleted={molkputeView.allMatchesCompleted}
+            leaderboard={molkputeView.leaderboard}
             spectatorSync
           />
         </section>
@@ -145,10 +152,21 @@ export default async function EpreuvePage({ params, searchParams }: Props) {
       ) : null}
 
       {isDebile100 && debile100View ? (
-        <section className="card">
-          <h2>100% Débile — quiz en direct</h2>
-          <Debile100Quiz {...debile100View} playerPseudo={playerSession?.pseudo ?? null} />
-        </section>
+        <>
+          <section className="card">
+            <h2>100% Débile — quiz en direct</h2>
+            <Debile100Quiz {...debile100View} playerPseudo={playerSession?.pseudo ?? null} />
+          </section>
+          {debile100Leaderboard ? (
+            <section className="card">
+              <h2>Classement survie</h2>
+              <Debile100Leaderboard
+                isFinalized={debile100Leaderboard.isFinalized}
+                leaderboard={debile100Leaderboard.leaderboard}
+              />
+            </section>
+          ) : null}
+        </>
       ) : null}
 
       {!isBeerPong && !isMolkpute && !isGolfDebile && !isDebile100 ? (

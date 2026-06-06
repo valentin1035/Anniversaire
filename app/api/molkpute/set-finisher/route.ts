@@ -34,6 +34,8 @@ export async function POST(request: NextRequest) {
 
     revalidatePath("/epreuves/2");
     revalidatePath("/admin/molkpute");
+    revalidatePath("/classement");
+    revalidatePath("/");
 
     return NextResponse.json({ ok: true });
   } catch (error) {

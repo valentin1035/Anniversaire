@@ -1,12 +1,18 @@
 import { revalidatePath } from "next/cache";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-guard";
-import { resetMolkputeMatch, setMolkputeMatchFinisher, submitMolkputeTurnPoints } from "@/lib/data";
+import {
+  finalizeMolkputeRanking,
+  resetMolkputeMatch,
+  resetMolkputeRanking,
+  setMolkputeMatchFinisher,
+  submitMolkputeTurnPoints
+} from "@/lib/data";
 import type { MolkputeTeamKey } from "@/lib/molkpute";
 
 type Payload = {
   eventId?: string;
-  action?: "submit-turn" | "set-finisher" | "reset-match";
+  action?: "submit-turn" | "set-finisher" | "reset-match" | "finalize" | "reset-ranking";
   matchId?: string;
   teamKey?: MolkputeTeamKey;
   points?: number;
@@ -18,8 +24,30 @@ export async function POST(request: NextRequest) {
     await requireAdmin();
     const payload = (await request.json()) as Payload;
 
-    if (!payload.eventId || !payload.action || !payload.matchId) {
+    if (!payload.eventId || !payload.action) {
       return NextResponse.json({ error: "Payload incomplet." }, { status: 400 });
+    }
+
+    if (payload.action === "finalize") {
+      await finalizeMolkputeRanking(payload.eventId);
+      revalidatePath("/admin/molkpute");
+      revalidatePath("/epreuves/2");
+      revalidatePath("/classement");
+      revalidatePath("/");
+      return NextResponse.json({ ok: true });
+    }
+
+    if (payload.action === "reset-ranking") {
+      await resetMolkputeRanking(payload.eventId);
+      revalidatePath("/admin/molkpute");
+      revalidatePath("/epreuves/2");
+      revalidatePath("/classement");
+      revalidatePath("/");
+      return NextResponse.json({ ok: true });
+    }
+
+    if (!payload.matchId) {
+      return NextResponse.json({ error: "Match requis." }, { status: 400 });
     }
 
     if (payload.action === "submit-turn") {
@@ -57,6 +85,8 @@ export async function POST(request: NextRequest) {
         payload.matchId,
         payload.finisherPlayerId
       );
+      revalidatePath("/classement");
+      revalidatePath("/");
     } else if (payload.action === "reset-match") {
       await resetMolkputeMatch(payload.eventId, payload.matchId);
     } else {

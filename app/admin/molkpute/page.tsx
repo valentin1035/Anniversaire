@@ -67,6 +67,9 @@ export default async function AdminMolkputePage({ searchParams }: Props) {
           hasDraw={view.hasDraw}
           playerTeamKey={null}
           playerPseudo={null}
+          isFinalized={view.isFinalized}
+          allMatchesCompleted={view.allMatchesCompleted}
+          leaderboard={view.leaderboard}
           adminMode
         />
       </section>
