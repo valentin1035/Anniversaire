@@ -7,10 +7,11 @@ import {
   DEBILE100_QUESTION_SECONDS,
   DEBILE100_SYNC_GRACE_SECONDS,
   getDebile100TimerState,
+  isDebile100OpenAnswerCorrect,
+  isDebile100OpenQuestion,
   type Debile100Phase
 } from "@/lib/debile100";
 import {
-  isAnswerQualifying,
   isPassAnswer,
   type Debile100RevealOutcome
 } from "@/lib/debile100-rules";
@@ -117,6 +118,7 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
   );
   const [pending, setPending] = useState(false);
   const [optimisticChoiceId, setOptimisticChoiceId] = useState<string | null>(null);
+  const [openDraft, setOpenDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const selectedChoiceId = game.myChoiceId ?? optimisticChoiceId;
 
@@ -130,6 +132,7 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
 
   useEffect(() => {
     setOptimisticChoiceId(null);
+    setOpenDraft("");
   }, [game.currentQuestion, game.phase]);
 
   useEffect(() => {
@@ -298,9 +301,20 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
   }
 
   const question = game.currentQuestionData;
+  const isOpenQuestion = isDebile100OpenQuestion(question);
   const correctId = question.correctChoiceId;
   const isRevealed = game.phase === "revealed";
   const usedPass = isPassAnswer(game.myChoiceId);
+  const openAnswerCorrect =
+    isOpenQuestion &&
+    isRevealed &&
+    selectedChoiceId &&
+    !usedPass &&
+    isDebile100OpenAnswerCorrect(
+      selectedChoiceId,
+      question.correctOpenAnswer ?? "",
+      question.openAnswerType ?? "text"
+    );
   const inGrace = game.phase === "playing" && timer.timerPhase === "grace";
   const timerRunning = game.phase === "playing" && timer.timerPhase === "running";
   const timerExpired = game.phase === "playing" && timer.timerPhase === "expired";
@@ -389,7 +403,58 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
 
         <h3 className="debile100QuestionText">{question.text}</h3>
 
-        {!usedPass ? (
+        {!usedPass && isOpenQuestion ? (
+          <div className="debile100OpenAnswer">
+            <input
+              type={question.openAnswerType === "number" ? "number" : "text"}
+              className={
+                isRevealed
+                  ? openAnswerCorrect
+                    ? "debile100OpenInput debile100OpenInputCorrect"
+                    : selectedChoiceId
+                      ? "debile100OpenInput debile100OpenInputWrong"
+                      : "debile100OpenInput"
+                  : "debile100OpenInput"
+              }
+              value={selectedChoiceId ?? openDraft}
+              disabled={
+                pending ||
+                Boolean(selectedChoiceId) ||
+                inGrace ||
+                timerExpired ||
+                isRevealed ||
+                !canAnswer
+              }
+              placeholder={
+                question.openAnswerType === "number"
+                  ? "Entre un nombre"
+                  : "Entre ta réponse"
+              }
+              onChange={(event) => setOpenDraft(event.target.value)}
+            />
+            {!selectedChoiceId && !isRevealed ? (
+              <button
+                type="button"
+                className="btnPrimary debile100OpenSubmit"
+                disabled={
+                  pending ||
+                  inGrace ||
+                  timerExpired ||
+                  !canAnswer ||
+                  !openDraft.trim()
+                }
+                onClick={() => void submitAnswer(openDraft)}
+              >
+                Valider
+              </button>
+            ) : null}
+            {isRevealed ? (
+              <p className="subtitle debile100OpenReveal">
+                Bonne réponse : <strong>{question.correctOpenAnswer}</strong>
+              </p>
+            ) : null}
+          </div>
+        ) : !usedPass ? (
           <div className="debile100Choices">
             {question.choices.map((choice) => {
               const isMine = selectedChoiceId === choice.id;
@@ -441,7 +506,11 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
         ) : null}
 
         {timerRunning && selectedChoiceId && !usedPass ? (
-          <p className="ok">Réponse enregistrée — en attente de la fin du chrono.</p>
+          <p className="ok">
+            {isOpenQuestion
+              ? `Réponse enregistrée : « ${selectedChoiceId} » — en attente de la fin du chrono.`
+              : "Réponse enregistrée — en attente de la fin du chrono."}
+          </p>
         ) : null}
 
         {timerExpired && !selectedChoiceId ? (

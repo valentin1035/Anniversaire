@@ -3,6 +3,7 @@ import type { Debile100Phase } from "@/lib/debile100";
 
 type Props = {
   questionRecaps: Debile100QuestionRecap[];
+  pendingRecap: Debile100QuestionRecap | null;
   currentQuestion: number;
   phase: Debile100Phase;
 };
@@ -12,7 +13,8 @@ const RESULT_LABELS: Record<Debile100AnswerRecapResult, string> = {
   pass: "Passe",
   wrong: "Faux",
   no_answer: "Pas de réponse",
-  not_playing: "Non concerné"
+  not_playing: "Non concerné",
+  pending: "—"
 };
 
 function resultClassName(result: Debile100AnswerRecapResult): string {
@@ -25,11 +27,50 @@ function resultClassName(result: Debile100AnswerRecapResult): string {
   return "debile100RecapMuted";
 }
 
-export function Debile100AnswerRecap({ questionRecaps, currentQuestion, phase }: Props) {
-  if (questionRecaps.length === 0) {
+function RecapTable({ recap, showResults }: { recap: Debile100QuestionRecap; showResults: boolean }) {
+  return (
+    <div className="tableWrap">
+      <table className="molkputeTable debile100RecapTable">
+        <thead>
+          <tr>
+            <th>Joueur</th>
+            <th>Réponse</th>
+            {showResults ? <th>Résultat</th> : null}
+          </tr>
+        </thead>
+        <tbody>
+          {recap.rows.map((row) => (
+            <tr key={row.playerId}>
+              <td>{row.pseudo}</td>
+              <td>
+                {row.result === "not_playing"
+                  ? "—"
+                  : row.result === "no_answer"
+                    ? "Pas de réponse"
+                    : (row.choiceLabel ?? "—")}
+              </td>
+              {showResults ? (
+                <td className={resultClassName(row.result)}>{RESULT_LABELS[row.result]}</td>
+              ) : null}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function Debile100AnswerRecap({
+  questionRecaps,
+  pendingRecap,
+  currentQuestion,
+  phase
+}: Props) {
+  if (!pendingRecap && questionRecaps.length === 0) {
     return (
       <p className="subtitle">
-        Les réponses apparaîtront ici après chaque « Afficher réponse ».
+        Les réponses s&apos;affichent ici à la fin du chrono, puis le détail complet après
+        « Afficher réponse ».
       </p>
     );
   }
@@ -40,6 +81,19 @@ export function Debile100AnswerRecap({ questionRecaps, currentQuestion, phase }:
 
   return (
     <div className="debile100RecapList">
+      {pendingRecap ? (
+        <article className="debile100RecapCard debile100RecapCardPending">
+          <header className="debile100RecapHeader">
+            <h4>Question {pendingRecap.questionIndex} — chrono terminé</h4>
+            <p className="subtitle debile100RecapPendingHint">
+              Réponses reçues avant révélation — clique « Afficher réponse » pour valider et
+              afficher la bonne réponse.
+            </p>
+          </header>
+          <RecapTable recap={pendingRecap} showResults={false} />
+        </article>
+      ) : null}
+
       {orderedRecaps.map((recap) => {
         const isCurrent = phase === "revealed" && currentQuestion === recap.questionIndex;
 
@@ -50,32 +104,13 @@ export function Debile100AnswerRecap({ questionRecaps, currentQuestion, phase }:
           >
             <header className="debile100RecapHeader">
               <h4>Question {recap.questionIndex}</h4>
-              <p className="subtitle debile100RecapCorrect">
-                Bonne réponse : <strong>{recap.correctChoiceLabel}</strong>
-              </p>
+              {recap.isRevealed ? (
+                <p className="subtitle debile100RecapCorrect">
+                  Bonne réponse : <strong>{recap.correctChoiceLabel}</strong>
+                </p>
+              ) : null}
             </header>
-            <div className="tableWrap">
-              <table className="molkputeTable debile100RecapTable">
-                <thead>
-                  <tr>
-                    <th>Joueur</th>
-                    <th>Réponse</th>
-                    <th>Résultat</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recap.rows.map((row) => (
-                    <tr key={row.playerId}>
-                      <td>{row.pseudo}</td>
-                      <td>{row.choiceLabel ?? "—"}</td>
-                      <td className={resultClassName(row.result)}>
-                        {RESULT_LABELS[row.result]}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <RecapTable recap={recap} showResults={recap.isRevealed} />
           </article>
         );
       })}

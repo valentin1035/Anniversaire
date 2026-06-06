@@ -3,6 +3,8 @@ import {
   canFinalizeDebile100State,
   DEBILE100_PASS_CHOICE_ID,
   DEBILE100_QUESTION_COUNT,
+  formatDebile100StoredAnswer,
+  getDebile100CorrectAnswerLabel,
   getDebile100RevealedQuestionCount,
   getDebile100TimerState,
   getQuestionByIndex,
@@ -18,6 +20,7 @@ import { createDefaultQuestions } from "@/lib/debile100";
 import {
   isAnswerQualifying,
   resolvePlayerView,
+  shouldPlayerPlayQuestion,
   type Debile100RevealOutcome,
   type Debile100ViewMode
 } from "@/lib/debile100-rules";
@@ -70,21 +73,17 @@ function buildDebile100AnswerRecapRow(
     };
   }
 
+  const choiceLabel = formatDebile100StoredAnswer(question, answer.choice_id);
   if (answer.choice_id === DEBILE100_PASS_CHOICE_ID) {
     return {
       playerId: status.player_id,
       pseudo,
-      choiceLabel: "Passe",
+      choiceLabel,
       result: "pass"
     };
   }
 
-  const choice = question.choices.find((entry) => entry.id === answer.choice_id);
-  const choiceLabel = choice?.label ?? answer.choice_id;
-  const result: Debile100AnswerRecapResult = isAnswerQualifying(
-    answer.choice_id,
-    question.correctChoiceId
-  )
+  const result: Debile100AnswerRecapResult = isAnswerQualifying(answer.choice_id, question)
     ? "correct"
     : "wrong";
 
@@ -114,10 +113,6 @@ function buildDebile100QuestionRecaps(input: {
     const answersForQuestion = input.answers.filter(
       (answer) => answer.question_index === questionIndex
     );
-    const correctChoice = question.choices.find(
-      (choice) => choice.id === question.correctChoiceId
-    );
-
     const rows = input.statuses
       .map((status) => {
         const pseudo = input.pseudoById.get(status.player_id) ?? "Joueur";
@@ -128,12 +123,84 @@ function buildDebile100QuestionRecaps(input: {
 
     recaps.push({
       questionIndex,
-      correctChoiceLabel: correctChoice?.label ?? "—",
+      correctChoiceLabel: getDebile100CorrectAnswerLabel(question),
+      isRevealed: true,
       rows
     });
   }
 
   return recaps;
+}
+
+function buildDebile100PendingQuestionRecap(input: {
+  questions: Debile100Question[];
+  statuses: Debile100StatusRow[];
+  answers: Debile100AnswerRow[];
+  pseudoById: Map<string, string>;
+  questionIndex: number;
+}): Debile100QuestionRecap | null {
+  const question = getQuestionByIndex(input.questions, input.questionIndex);
+  if (!question) {
+    return null;
+  }
+
+  const answersForQuestion = input.answers.filter(
+    (answer) => answer.question_index === input.questionIndex
+  );
+
+  const rows = input.statuses
+    .map((status) => {
+      const pseudo = input.pseudoById.get(status.player_id) ?? "Joueur";
+      const progress = getDebile100PlayerProgress(status.player_id, status);
+      const eliminatedAt = progress.eliminated_at_question;
+
+      if (
+        progress.status === "eliminated" &&
+        eliminatedAt !== null &&
+        eliminatedAt < input.questionIndex
+      ) {
+        return {
+          playerId: status.player_id,
+          pseudo,
+          choiceLabel: null,
+          result: "not_playing" as const
+        };
+      }
+
+      if (!shouldPlayerPlayQuestion(progress, input.questionIndex)) {
+        return {
+          playerId: status.player_id,
+          pseudo,
+          choiceLabel: null,
+          result: "not_playing" as const
+        };
+      }
+
+      const answer = answersForQuestion.find((entry) => entry.player_id === status.player_id);
+      if (!answer) {
+        return {
+          playerId: status.player_id,
+          pseudo,
+          choiceLabel: null,
+          result: "no_answer" as const
+        };
+      }
+
+      return {
+        playerId: status.player_id,
+        pseudo,
+        choiceLabel: formatDebile100StoredAnswer(question, answer.choice_id),
+        result: "pending" as const
+      };
+    })
+    .sort((a, b) => a.pseudo.localeCompare(b.pseudo, "fr"));
+
+  return {
+    questionIndex: input.questionIndex,
+    correctChoiceLabel: null,
+    isRevealed: false,
+    rows
+  };
 }
 
 export type Debile100AdminView = {
@@ -151,6 +218,7 @@ export type Debile100AdminView = {
   canFinalize: boolean;
   leaderboard: Debile100LeaderboardRow[];
   questionRecaps: Debile100QuestionRecap[];
+  pendingRecap: Debile100QuestionRecap | null;
   eliminatedPlayers: Array<{
     playerId: string;
     pseudo: string;
@@ -198,13 +266,26 @@ export async function loadDebile100AdminView(eventId: string): Promise<Debile100
   ]);
   const pseudoById = new Map(players.map((player) => [player.id, player.pseudo]));
 
+  const currentAnswers =
+    currentQuestion > 0
+      ? await getDebile100AnswersForQuestion(eventId, currentQuestion)
+      : [];
+
   const answerCounts: Record<string, number> = {};
-  if (currentQuestion > 0) {
-    const answers = await getDebile100AnswersForQuestion(eventId, currentQuestion);
-    for (const answer of answers) {
-      answerCounts[answer.choice_id] = (answerCounts[answer.choice_id] ?? 0) + 1;
-    }
+  for (const answer of currentAnswers) {
+    answerCounts[answer.choice_id] = (answerCounts[answer.choice_id] ?? 0) + 1;
   }
+
+  const pendingRecap =
+    phase === "playing" && timer.timerPhase === "expired" && currentQuestion > 0
+      ? buildDebile100PendingQuestionRecap({
+          questions,
+          statuses,
+          answers: currentAnswers,
+          pseudoById,
+          questionIndex: currentQuestion
+        })
+      : null;
 
   const questionRecaps = buildDebile100QuestionRecaps({
     questions,
@@ -237,6 +318,7 @@ export async function loadDebile100AdminView(eventId: string): Promise<Debile100
     canFinalize: Boolean(state && canFinalizeDebile100State(state) && !isFinalized),
     leaderboard: buildDebile100Leaderboard(entries, pointsByPlayer),
     questionRecaps,
+    pendingRecap,
     eliminatedPlayers: statuses
       .filter((row) => row.status === "eliminated")
       .map((row) => ({

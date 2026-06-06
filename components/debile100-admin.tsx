@@ -3,11 +3,14 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
+  createDebile100Choices,
   DEBILE100_QUESTION_COUNT,
   DEBILE100_SYNC_GRACE_SECONDS,
-  isHintQuestion
+  isHintQuestion,
+  type Debile100ChoiceCount,
+  type Debile100OpenAnswerType,
+  type Debile100Question
 } from "@/lib/debile100";
-import type { Debile100Question } from "@/lib/debile100";
 import { Debile100AnswerRecap } from "@/components/debile100-answer-recap";
 import { Debile100Leaderboard } from "@/components/debile100-leaderboard";
 import { Debile100ReinstatePanel } from "@/components/debile100-reinstate-panel";
@@ -30,6 +33,7 @@ export function Debile100Admin({
   canFinalize,
   leaderboard,
   questionRecaps,
+  pendingRecap,
   eliminatedPlayers
 }: Props) {
   const router = useRouter();
@@ -105,6 +109,64 @@ export function Debile100Admin({
     );
   }
 
+  function setQuestionType(questionIndex: number, questionType: "choice" | "open") {
+    setDraft((prev) =>
+      prev.map((question) => {
+        if (question.index !== questionIndex) {
+          return question;
+        }
+        if (questionType === "open") {
+          return {
+            ...question,
+            questionType: "open",
+            choices: [],
+            correctChoiceId: "",
+            openAnswerType: question.openAnswerType ?? "text",
+            correctOpenAnswer: question.correctOpenAnswer ?? ""
+          };
+        }
+        const choices =
+          question.choices.length >= 2
+            ? question.choices
+            : createDebile100Choices(4);
+        return {
+          ...question,
+          questionType: "choice",
+          choices,
+          correctChoiceId: choices.some((choice) => choice.id === question.correctChoiceId)
+            ? question.correctChoiceId
+            : choices[0].id,
+          openAnswerType: undefined,
+          correctOpenAnswer: undefined
+        };
+      })
+    );
+  }
+
+  function setChoiceCount(questionIndex: number, count: Debile100ChoiceCount) {
+    setDraft((prev) =>
+      prev.map((question) => {
+        if (question.index !== questionIndex || question.questionType !== "choice") {
+          return question;
+        }
+        const nextChoices = createDebile100Choices(count).map((choice) => {
+          const existing = question.choices.find((entry) => entry.id === choice.id);
+          return existing ? { ...choice, label: existing.label } : choice;
+        });
+        const correctChoiceId = nextChoices.some(
+          (choice) => choice.id === question.correctChoiceId
+        )
+          ? question.correctChoiceId
+          : nextChoices[0].id;
+        return {
+          ...question,
+          choices: nextChoices,
+          correctChoiceId
+        };
+      })
+    );
+  }
+
   const canStart = (index: number) => {
     if (index === 1) {
       return phase === "idle" && currentQuestion === 0;
@@ -154,27 +216,101 @@ export function Debile100Admin({
                   }
                 />
               ) : null}
-              {question.choices.map((choice) => (
-                <div key={choice.id} className="debile100AdminChoiceRow">
-                  <input
-                    type="radio"
-                    name={`correct-${question.index}`}
-                    checked={question.correctChoiceId === choice.id}
-                    disabled={pending}
-                    onChange={() =>
-                      updateQuestion(question.index, { correctChoiceId: choice.id })
-                    }
-                  />
-                  <input
-                    type="text"
-                    value={choice.label}
+              <div className="debile100AdminTypeRow">
+                <label className="debile100AdminTypeLabel">
+                  Type
+                  <select
+                    value={question.questionType}
                     disabled={pending}
                     onChange={(event) =>
-                      updateChoiceLabel(question.index, choice.id, event.target.value)
+                      setQuestionType(
+                        question.index,
+                        event.target.value === "open" ? "open" : "choice"
+                      )
+                    }
+                  >
+                    <option value="choice">QCM</option>
+                    <option value="open">Question ouverte</option>
+                  </select>
+                </label>
+                {question.questionType === "choice" ? (
+                  <label className="debile100AdminTypeLabel">
+                    Réponses
+                    <select
+                      value={question.choices.length}
+                      disabled={pending}
+                      onChange={(event) =>
+                        setChoiceCount(
+                          question.index,
+                          Number(event.target.value) as Debile100ChoiceCount
+                        )
+                      }
+                    >
+                      <option value={2}>2 choix</option>
+                      <option value={3}>3 choix</option>
+                      <option value={4}>4 choix</option>
+                    </select>
+                  </label>
+                ) : (
+                  <label className="debile100AdminTypeLabel">
+                    Format réponse
+                    <select
+                      value={question.openAnswerType ?? "text"}
+                      disabled={pending}
+                      onChange={(event) =>
+                        updateQuestion(question.index, {
+                          openAnswerType: event.target.value as Debile100OpenAnswerType
+                        })
+                      }
+                    >
+                      <option value="text">Texte</option>
+                      <option value="number">Nombre</option>
+                    </select>
+                  </label>
+                )}
+              </div>
+              {question.questionType === "choice" ? (
+                question.choices.map((choice) => (
+                  <div key={choice.id} className="debile100AdminChoiceRow">
+                    <input
+                      type="radio"
+                      name={`correct-${question.index}`}
+                      checked={question.correctChoiceId === choice.id}
+                      disabled={pending}
+                      onChange={() =>
+                        updateQuestion(question.index, { correctChoiceId: choice.id })
+                      }
+                    />
+                    <input
+                      type="text"
+                      value={choice.label}
+                      disabled={pending}
+                      onChange={(event) =>
+                        updateChoiceLabel(question.index, choice.id, event.target.value)
+                      }
+                    />
+                  </div>
+                ))
+              ) : (
+                <label className="debile100AdminOpenAnswer">
+                  Bonne réponse attendue
+                  <input
+                    type={question.openAnswerType === "number" ? "number" : "text"}
+                    value={question.correctOpenAnswer ?? ""}
+                    disabled={pending}
+                    placeholder={
+                      question.openAnswerType === "number"
+                        ? "Ex. 42"
+                        : "Ex. Paris"
+                    }
+                    onChange={(event) =>
+                      updateQuestion(question.index, {
+                        correctOpenAnswer: event.target.value
+                      })
                     }
                   />
-                </div>
-              ))}
+                </label>
+              )}
             </article>
           ))}
         </div>
@@ -260,10 +396,12 @@ export function Debile100Admin({
       <section className="card">
         <h3>Réponses des joueurs</h3>
         <p className="subtitle debile100Hint">
-          Récapitulatif après chaque révélation — dernière question en haut.
+          À la fin du chrono : réponses brutes. Après « Afficher réponse » : bonne réponse et
+          résultat par joueur.
         </p>
         <Debile100AnswerRecap
           questionRecaps={questionRecaps}
+          pendingRecap={pendingRecap}
           currentQuestion={currentQuestion}
           phase={phase}
         />

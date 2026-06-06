@@ -15,14 +15,135 @@ export type Debile100Choice = {
   label: string;
 };
 
+export type Debile100QuestionType = "choice" | "open";
+export type Debile100OpenAnswerType = "text" | "number";
+export type Debile100ChoiceCount = 2 | 3 | 4;
+
+export const DEBILE100_CHOICE_IDS = ["A", "B", "C", "D"] as const;
+
 export type Debile100Question = {
   index: number;
   text: string;
   /** Indice (questions 5 à 7), configurable dans l'admin. */
   hint?: string;
+  questionType: Debile100QuestionType;
   choices: Debile100Choice[];
   correctChoiceId: string;
+  openAnswerType?: Debile100OpenAnswerType;
+  correctOpenAnswer?: string;
 };
+
+export function createDebile100Choices(count: Debile100ChoiceCount): Debile100Choice[] {
+  return DEBILE100_CHOICE_IDS.slice(0, count).map((id) => ({
+    id,
+    label: `Réponse ${id}`
+  }));
+}
+
+export function isDebile100OpenQuestion(question: Debile100Question): boolean {
+  return question.questionType === "open";
+}
+
+export function getDebile100CorrectAnswerLabel(question: Debile100Question): string {
+  if (isDebile100OpenQuestion(question)) {
+    return question.correctOpenAnswer?.trim() || "—";
+  }
+  const choice = question.choices.find((entry) => entry.id === question.correctChoiceId);
+  return choice?.label ?? question.correctChoiceId;
+}
+
+export function formatDebile100StoredAnswer(
+  question: Debile100Question,
+  choiceId: string
+): string {
+  if (choiceId === DEBILE100_PASS_CHOICE_ID) {
+    return "Passe";
+  }
+  if (isDebile100OpenQuestion(question)) {
+    return choiceId;
+  }
+  const choice = question.choices.find((entry) => entry.id === choiceId);
+  return choice?.label ?? choiceId;
+}
+
+export function normalizeDebile100OpenAnswerInput(
+  raw: string,
+  type: Debile100OpenAnswerType
+): { ok: true; value: string } | { ok: false; error: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return { ok: false, error: "Réponse vide." };
+  }
+
+  if (type === "number") {
+    const compact = trimmed.replace(/\s/g, "").replace(",", ".");
+    if (!/^-?\d+(\.\d+)?$/.test(compact)) {
+      return { ok: false, error: "Entre un nombre valide." };
+    }
+    const num = Number(compact);
+    if (!Number.isFinite(num)) {
+      return { ok: false, error: "Entre un nombre valide." };
+    }
+    return { ok: true, value: String(num) };
+  }
+
+  return { ok: true, value: trimmed };
+}
+
+export function isDebile100OpenAnswerCorrect(
+  playerAnswer: string,
+  expectedAnswer: string,
+  type: Debile100OpenAnswerType
+): boolean {
+  const player = normalizeDebile100OpenAnswerInput(playerAnswer, type);
+  const expected = normalizeDebile100OpenAnswerInput(expectedAnswer, type);
+  if (!player.ok || !expected.ok) {
+    return false;
+  }
+
+  if (type === "number") {
+    return player.value === expected.value;
+  }
+
+  return player.value.toLocaleLowerCase("fr") === expected.value.toLocaleLowerCase("fr");
+}
+
+export function assertDebile100QuestionsValid(questions: Debile100Question[]): void {
+  if (questions.length !== DEBILE100_QUESTION_COUNT) {
+    throw new Error(`Il faut exactement ${DEBILE100_QUESTION_COUNT} questions.`);
+  }
+
+  for (const question of questions) {
+    if (!question.text.trim()) {
+      throw new Error(`La question ${question.index} est vide.`);
+    }
+
+    if (isDebile100OpenQuestion(question)) {
+      const openType = question.openAnswerType ?? "text";
+      const expected = question.correctOpenAnswer?.trim() ?? "";
+      if (!expected) {
+        throw new Error(`La question ${question.index} : indique la bonne réponse attendue.`);
+      }
+      const normalized = normalizeDebile100OpenAnswerInput(expected, openType);
+      if (!normalized.ok) {
+        throw new Error(`La question ${question.index} : ${normalized.error}`);
+      }
+      continue;
+    }
+
+    if (question.choices.length < 2 || question.choices.length > 4) {
+      throw new Error(`La question ${question.index} doit avoir 2, 3 ou 4 réponses.`);
+    }
+    for (const choice of question.choices) {
+      if (!choice.id.trim() || !choice.label.trim()) {
+        throw new Error(`La question ${question.index} : toutes les réponses doivent être renseignées.`);
+      }
+    }
+    if (!question.choices.some((choice) => choice.id === question.correctChoiceId)) {
+      throw new Error(`La question ${question.index} : bonne réponse invalide.`);
+    }
+  }
+}
 
 export type Debile100PlayerStatus = "active" | "eliminated";
 
@@ -33,12 +154,8 @@ export function createDefaultQuestions(): Debile100Question[] {
       index,
       text: `Question ${index} — à personnaliser dans l'admin`,
       hint: index >= 5 && index <= 7 ? `Indice question ${index} — à personnaliser` : undefined,
-      choices: [
-        { id: "A", label: "Réponse A" },
-        { id: "B", label: "Réponse B" },
-        { id: "C", label: "Réponse C" },
-        { id: "D", label: "Réponse D" }
-      ],
+      questionType: "choice",
+      choices: createDebile100Choices(4),
       correctChoiceId: "A"
     };
   });
@@ -73,17 +190,42 @@ export function normalizeQuestions(raw: unknown): Debile100Question[] {
     const text = typeof row.text === "string" ? row.text.trim() : base.text;
     const hintRaw = typeof row.hint === "string" ? row.hint.trim() : base.hint ?? "";
     const hint = hintRaw || (base.index >= 5 && base.index <= 7 ? base.hint : undefined);
+    const questionType: Debile100QuestionType =
+      row.questionType === "open" || row.questionType === "choice"
+        ? row.questionType
+        : base.questionType;
+    const openAnswerType: Debile100OpenAnswerType =
+      row.openAnswerType === "number" ? "number" : "text";
+    const correctOpenAnswer =
+      typeof row.correctOpenAnswer === "string" ? row.correctOpenAnswer.trim() : "";
     const correctChoiceId =
       typeof row.correctChoiceId === "string" ? row.correctChoiceId : base.correctChoiceId;
+
+    if (questionType === "open") {
+      return {
+        index: base.index,
+        text: text || base.text,
+        hint,
+        questionType: "open",
+        choices: [],
+        correctChoiceId: "",
+        openAnswerType,
+        correctOpenAnswer: correctOpenAnswer || base.correctOpenAnswer || ""
+      };
+    }
+
+    const normalizedChoices =
+      choices.length >= 2 && choices.length <= 4 ? choices : base.choices;
 
     return {
       index: base.index,
       text: text || base.text,
       hint,
-      choices: choices.length >= 2 ? choices : base.choices,
-      correctChoiceId: choices.some((c) => c.id === correctChoiceId)
+      questionType: "choice",
+      choices: normalizedChoices,
+      correctChoiceId: normalizedChoices.some((c) => c.id === correctChoiceId)
         ? correctChoiceId
-        : choices[0]?.id ?? base.correctChoiceId
+        : normalizedChoices[0]?.id ?? base.correctChoiceId
     };
   });
 }
@@ -173,7 +315,8 @@ export type Debile100AnswerRecapResult =
   | "pass"
   | "wrong"
   | "no_answer"
-  | "not_playing";
+  | "not_playing"
+  | "pending";
 
 export type Debile100AnswerRecapRow = {
   playerId: string;
@@ -184,7 +327,8 @@ export type Debile100AnswerRecapRow = {
 
 export type Debile100QuestionRecap = {
   questionIndex: number;
-  correctChoiceLabel: string;
+  correctChoiceLabel: string | null;
+  isRevealed: boolean;
   rows: Debile100AnswerRecapRow[];
 };
 

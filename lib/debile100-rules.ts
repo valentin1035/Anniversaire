@@ -1,6 +1,8 @@
 import {
   DEBILE100_PASS_CHOICE_ID,
   DEBILE100_QUESTION_COUNT,
+  isDebile100OpenAnswerCorrect,
+  isDebile100OpenQuestion,
   type Debile100Phase,
   type Debile100Question
 } from "@/lib/debile100";
@@ -70,7 +72,7 @@ export function mustPlayCatchupQuestion(
   progress: Debile100PlayerProgress,
   catchupQuestionIndex: number,
   gateAnswerChoiceId: string | null,
-  gateCorrectChoiceId: string
+  gateQuestion: Debile100Question
 ): boolean {
   const gateIndex = catchupQuestionIndex - 1;
   if (progress.skip_question_index === catchupQuestionIndex) {
@@ -79,7 +81,7 @@ export function mustPlayCatchupQuestion(
   if (progress.catchup_question_index === catchupQuestionIndex) {
     return true;
   }
-  return !isAnswerQualifying(gateAnswerChoiceId, gateCorrectChoiceId);
+  return !isAnswerQualifying(gateAnswerChoiceId, gateQuestion);
 }
 
 export function canUseHint(progress: Debile100PlayerProgress | null, questionIndex: number): boolean {
@@ -102,15 +104,28 @@ export function isPassAnswer(choiceId: string | null | undefined): boolean {
   return choiceId === DEBILE100_PASS_CHOICE_ID;
 }
 
-export function isAnswerCorrect(choiceId: string | null | undefined, correctChoiceId: string): boolean {
-  return Boolean(choiceId) && choiceId === correctChoiceId;
+export function isAnswerCorrect(
+  choiceId: string | null | undefined,
+  question: Debile100Question
+): boolean {
+  if (!choiceId) {
+    return false;
+  }
+  if (isDebile100OpenQuestion(question)) {
+    return isDebile100OpenAnswerCorrect(
+      choiceId,
+      question.correctOpenAnswer ?? "",
+      question.openAnswerType ?? "text"
+    );
+  }
+  return choiceId === question.correctChoiceId;
 }
 
 export function isAnswerQualifying(
   choiceId: string | null | undefined,
-  correctChoiceId: string
+  question: Debile100Question
 ): boolean {
-  return isPassAnswer(choiceId) || isAnswerCorrect(choiceId, correctChoiceId);
+  return isPassAnswer(choiceId) || isAnswerCorrect(choiceId, question);
 }
 
 /** Le joueur doit-il voir et répondre à la question globale en cours ? */
@@ -231,8 +246,7 @@ export function getRevealOutcome(
     return null;
   }
 
-  const correctId = question.correctChoiceId;
-  const qualifying = isAnswerQualifying(myChoiceId, correctId);
+  const qualifying = isAnswerQualifying(myChoiceId, question);
 
   if (questionIndex === 14 && qualifying) {
     return "finale";
@@ -271,9 +285,9 @@ export function getProgressAfterReveal(
   progress: Debile100PlayerProgress,
   questionIndex: number,
   choiceId: string | null,
-  correctChoiceId: string
+  question: Debile100Question
 ): Debile100PlayerProgress {
-  const qualifying = isAnswerQualifying(choiceId, correctChoiceId);
+  const qualifying = isAnswerQualifying(choiceId, question);
   const next = { ...progress };
 
   if (isCatchupGateQuestion(questionIndex)) {

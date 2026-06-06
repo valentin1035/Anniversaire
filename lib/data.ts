@@ -35,6 +35,9 @@ import {
   DEBILE100_PASS_CHOICE_ID,
   getQuestionByIndex,
   isQuestionTimerExpired,
+  assertDebile100QuestionsValid,
+  isDebile100OpenQuestion,
+  normalizeDebile100OpenAnswerInput,
   normalizeQuestions,
   type Debile100Phase,
   type Debile100Question,
@@ -1169,21 +1172,7 @@ async function ensureDebile100State(eventId: string) {
 }
 
 export async function saveDebile100Questions(eventId: string, questions: Debile100Question[]) {
-  if (questions.length !== DEBILE100_QUESTION_COUNT) {
-    throw new Error(`Il faut exactement ${DEBILE100_QUESTION_COUNT} questions.`);
-  }
-
-  for (const question of questions) {
-    if (!question.text.trim()) {
-      throw new Error(`La question ${question.index} est vide.`);
-    }
-    if (question.choices.length < 2) {
-      throw new Error(`La question ${question.index} doit avoir au moins 2 réponses.`);
-    }
-    if (!question.choices.some((choice) => choice.id === question.correctChoiceId)) {
-      throw new Error(`La question ${question.index} : bonne réponse invalide.`);
-    }
-  }
+  assertDebile100QuestionsValid(questions);
 
   await ensureDebile100State(eventId);
   const supabase = getSupabaseAdminClient();
@@ -1343,7 +1332,18 @@ export async function submitDebile100Answer(
   if (isPassAnswer(choiceId)) {
     throw new Error("Utilise le bouton Passe pour cette action.");
   }
-  if (!question.choices.some((choice) => choice.id === choiceId)) {
+
+  let storedChoiceId = choiceId;
+  if (isDebile100OpenQuestion(question)) {
+    const normalized = normalizeDebile100OpenAnswerInput(
+      choiceId,
+      question.openAnswerType ?? "text"
+    );
+    if (!normalized.ok) {
+      throw new Error(normalized.error);
+    }
+    storedChoiceId = normalized.value;
+  } else if (!question.choices.some((choice) => choice.id === choiceId)) {
     throw new Error("Réponse invalide.");
   }
 
@@ -1359,7 +1359,7 @@ export async function submitDebile100Answer(
     event_id: eventId,
     player_id: playerId,
     question_index: state.current_question,
-    choice_id: choiceId
+    choice_id: storedChoiceId
   });
 
   if (error) {
@@ -1527,12 +1527,7 @@ async function syncCatchupAssignmentsBeforeQuestion(eventId: string, questionInd
     const gateChoiceId = gateAnswer?.choice_id ?? null;
 
     if (
-      !mustPlayCatchupQuestion(
-        progress,
-        questionIndex,
-        gateChoiceId,
-        gateQuestion.correctChoiceId
-      )
+      !mustPlayCatchupQuestion(progress, questionIndex, gateChoiceId, gateQuestion)
     ) {
       continue;
     }
@@ -1647,7 +1642,7 @@ export async function revealDebile100Question(eventId: string, questionIndex: nu
 
     const answer = answers.find((entry) => entry.player_id === playerId);
     const choiceId = answer?.choice_id ?? null;
-    const updated = getProgressAfterReveal(progress, questionIndex, choiceId, question.correctChoiceId);
+    const updated = getProgressAfterReveal(progress, questionIndex, choiceId, question);
 
     const { error } = await supabase.from("debile100_player_status").upsert(
       {
