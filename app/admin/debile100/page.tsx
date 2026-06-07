@@ -25,8 +25,8 @@ export default async function AdminDebile100Page() {
       <section className="card">
         <h1 className="title">😂 100% Débile — admin</h1>
         <p className="subtitle">
-          14 questions — 2 s de synchro puis 30 s pour répondre. Indices (Q5–7), rattrapage
-          (Q8–11), Passe (Q12–14). Affiche la réponse quand tu veux. Joueurs :{" "}
+          14 questions — 2 s de synchro puis 30 s pour répondre. Indices (Q4–5), deuxième chance
+          (Q6–9), Passe (Q10–11). Q12–14 sans aide. Affiche la réponse quand tu veux. Joueurs :{" "}
           <Link href="/epreuves/4">/epreuves/4</Link>.
         </p>
         <div className="beerPongActions">

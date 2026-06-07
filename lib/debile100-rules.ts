@@ -1,5 +1,11 @@
 import {
+  DEBILE100_CATCHUP_GATE_QUESTIONS,
+  DEBILE100_CATCHUP_RETRY_QUESTIONS,
+  DEBILE100_HINT_QUESTION_MAX,
+  DEBILE100_HINT_QUESTION_MIN,
   DEBILE100_PASS_CHOICE_ID,
+  DEBILE100_PASS_QUESTION_MAX,
+  DEBILE100_PASS_QUESTION_MIN,
   DEBILE100_QUESTION_COUNT,
   isDebile100OpenAnswerCorrect,
   isDebile100OpenQuestion,
@@ -44,19 +50,19 @@ export type Debile100RevealOutcome =
   | null;
 
 export function isHintQuestion(index: number): boolean {
-  return index >= 5 && index <= 7;
+  return index >= DEBILE100_HINT_QUESTION_MIN && index <= DEBILE100_HINT_QUESTION_MAX;
 }
 
 export function isPassQuestion(index: number): boolean {
-  return index >= 12 && index <= 14;
+  return index >= DEBILE100_PASS_QUESTION_MIN && index <= DEBILE100_PASS_QUESTION_MAX;
 }
 
 export function isCatchupGateQuestion(index: number): boolean {
-  return index === 8 || index === 10;
+  return (DEBILE100_CATCHUP_GATE_QUESTIONS as readonly number[]).includes(index);
 }
 
 export function isCatchupRetryQuestion(index: number): boolean {
-  return index === 9 || index === 11;
+  return (DEBILE100_CATCHUP_RETRY_QUESTIONS as readonly number[]).includes(index);
 }
 
 export function getCatchupQuestionAfterGate(gateIndex: number): number {
@@ -64,10 +70,10 @@ export function getCatchupQuestionAfterGate(gateIndex: number): number {
 }
 
 export function shouldAssignCatchupOnQuestionStart(questionIndex: number): boolean {
-  return questionIndex === 9 || questionIndex === 11;
+  return (DEBILE100_CATCHUP_RETRY_QUESTIONS as readonly number[]).includes(questionIndex);
 }
 
-/** Après la Q8 ou Q10 : ce joueur doit-il jouer la Q9 ou Q11 ? */
+/** Après la Q6 ou Q8 : ce joueur doit-il jouer la Q7 ou Q9 ? */
 export function mustPlayCatchupQuestion(
   progress: Debile100PlayerProgress,
   catchupQuestionIndex: number,
@@ -153,11 +159,11 @@ export function getWaitingMessage(
   currentQuestion: number
 ): string {
   if (progress.skip_question_index === currentQuestion) {
+    if (currentQuestion === 7) {
+      return "Tu as validé la question 6 — en attente de la question 8.";
+    }
     if (currentQuestion === 9) {
       return "Tu as validé la question 8 — en attente de la question 10.";
-    }
-    if (currentQuestion === 11) {
-      return "Tu as validé la question 10 — en attente de la question 12.";
     }
     const next = Math.min(currentQuestion + 1, DEBILE100_QUESTION_COUNT);
     return `Tu es qualifié(e) — en attente de la question ${next}.`;
@@ -264,10 +270,10 @@ export function getRevealOutcome(
   }
 
   if (isCatchupRetryQuestion(questionIndex)) {
-    if (questionIndex === 9 && qualifying) {
+    if (questionIndex === 7 && qualifying) {
       return "qualified";
     }
-    if (questionIndex === 11 && qualifying) {
+    if (questionIndex === 9 && qualifying) {
       return "qualified";
     }
     return qualifying ? "qualified" : "eliminated";

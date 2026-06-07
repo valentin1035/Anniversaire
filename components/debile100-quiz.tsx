@@ -12,7 +12,9 @@ import {
   type Debile100Phase
 } from "@/lib/debile100";
 import {
+  isHintQuestion,
   isPassAnswer,
+  isPassQuestion,
   type Debile100RevealOutcome
 } from "@/lib/debile100-rules";
 import type { Debile100SyncPayload } from "@/lib/debile100-sync";
@@ -77,27 +79,27 @@ function verdictMessage(
     case "finale":
       return "Bravo, vous êtes qualifié(e) jusqu'à la finale !";
     case "qualified":
+      if (questionIndex === 7) {
+        return "Bonne réponse — vous êtes qualifié(e) pour la question 8.";
+      }
       if (questionIndex === 9) {
         return "Bonne réponse — vous êtes qualifié(e) pour la question 10.";
       }
-      if (questionIndex === 11) {
-        return "Bonne réponse — vous êtes qualifié(e) pour la question 12.";
-      }
       return "Vous êtes qualifiés pour la question suivante.";
     case "qualified_skip":
+      if (questionIndex === 6) {
+        return "Bonne réponse — vous passez la question 7, rendez-vous à la question 8.";
+      }
       if (questionIndex === 8) {
         return "Bonne réponse — vous passez la question 9, rendez-vous à la question 10.";
       }
-      if (questionIndex === 10) {
-        return "Bonne réponse — vous passez la question 11, rendez-vous à la question 12.";
-      }
       return "Bonne réponse — vous passez la question de rattrapage.";
     case "catchup_offer":
+      if (questionIndex === 6) {
+        return "Mauvaise réponse — vous aurez la question 7 pour vous rattraper.";
+      }
       if (questionIndex === 8) {
         return "Mauvaise réponse — vous aurez la question 9 pour vous rattraper.";
-      }
-      if (questionIndex === 10) {
-        return "Mauvaise réponse — vous aurez la question 11 pour vous rattraper.";
       }
       return "Mauvaise réponse — question de rattrapage à venir.";
     case "pass_ok":
@@ -365,7 +367,7 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
         </header>
 
         <div className="debile100Powerups">
-          {question.index >= 5 && question.index <= 7 ? (
+          {isHintQuestion(question.index) ? (
             <button
               type="button"
               className={
@@ -379,7 +381,7 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
               {game.hintUsed || localHintText ? "Indice utilisé" : "Indice"}
             </button>
           ) : null}
-          {question.index >= 12 && question.index <= 14 ? (
+          {isPassQuestion(question.index) ? (
             <button
               type="button"
               className={
@@ -542,7 +544,7 @@ export function Debile100Quiz({ eventId, playerPseudo, ...initial }: Props) {
 
       {timerRunning ? (
         <p className="subtitle debile100Hint">
-          {DEBILE100_QUESTION_SECONDS} secondes pour répondre. Indice (Q5–7) et Passe (Q12–14) : une
+          {DEBILE100_QUESTION_SECONDS} secondes pour répondre. Indice (Q4–5) et Passe (Q10–11) : une
           seule utilisation chacun sur toute la manche.
         </p>
       ) : null}

@@ -139,7 +139,7 @@ drop policy if exists golf_debile_submissions_public_select on public.golf_debil
 create policy golf_debile_submissions_public_select on public.golf_debile_submissions
 for select to anon, authenticated using (true);
 
--- 100% Débile : quiz synchronisé (14 questions, 30 s, élimination + indices / rattrapage / passe)
+-- 100% Débile : quiz synchronisé (14 questions, 30 s — indices Q4-5, 2e chance Q6-9, passe Q10-11)
 create table if not exists public.debile100_state (
   event_id uuid primary key references public.events(id) on delete cascade,
   questions jsonb not null default '[]'::jsonb,

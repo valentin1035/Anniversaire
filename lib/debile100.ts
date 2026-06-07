@@ -1,4 +1,13 @@
 export const DEBILE100_QUESTION_COUNT = 14;
+/** Indice utilisable une fois sur les questions 4 et 5. */
+export const DEBILE100_HINT_QUESTION_MIN = 4;
+export const DEBILE100_HINT_QUESTION_MAX = 5;
+/** Passe utilisable une fois sur les questions 10 et 11. */
+export const DEBILE100_PASS_QUESTION_MIN = 10;
+export const DEBILE100_PASS_QUESTION_MAX = 11;
+/** Deuxième chance : portes 6 et 8, rattrapage 7 et 9. */
+export const DEBILE100_CATCHUP_GATE_QUESTIONS = [6, 8] as const;
+export const DEBILE100_CATCHUP_RETRY_QUESTIONS = [7, 9] as const;
 export const DEBILE100_PASS_CHOICE_ID = "__PASS__";
 export const DEBILE100_QUESTION_SECONDS = 30;
 /** Délai avant le chrono : le temps que les téléphones reçoivent la question. */
@@ -24,7 +33,7 @@ export const DEBILE100_CHOICE_IDS = ["A", "B", "C", "D"] as const;
 export type Debile100Question = {
   index: number;
   text: string;
-  /** Indice (questions 5 à 7), configurable dans l'admin. */
+  /** Indice (questions 4 à 5), configurable dans l'admin. */
   hint?: string;
   questionType: Debile100QuestionType;
   choices: Debile100Choice[];
@@ -153,7 +162,10 @@ export function createDefaultQuestions(): Debile100Question[] {
     return {
       index,
       text: `Question ${index} — à personnaliser dans l'admin`,
-      hint: index >= 5 && index <= 7 ? `Indice question ${index} — à personnaliser` : undefined,
+      hint:
+        index >= DEBILE100_HINT_QUESTION_MIN && index <= DEBILE100_HINT_QUESTION_MAX
+          ? `Indice question ${index} — à personnaliser`
+          : undefined,
       questionType: "choice",
       choices: createDebile100Choices(4),
       correctChoiceId: "A"
@@ -189,7 +201,11 @@ export function normalizeQuestions(raw: unknown): Debile100Question[] {
 
     const text = typeof row.text === "string" ? row.text.trim() : base.text;
     const hintRaw = typeof row.hint === "string" ? row.hint.trim() : base.hint ?? "";
-    const hint = hintRaw || (base.index >= 5 && base.index <= 7 ? base.hint : undefined);
+    const hint =
+      hintRaw ||
+      (base.index >= DEBILE100_HINT_QUESTION_MIN && base.index <= DEBILE100_HINT_QUESTION_MAX
+        ? base.hint
+        : undefined);
     const questionType: Debile100QuestionType =
       row.questionType === "open" || row.questionType === "choice"
         ? row.questionType
@@ -228,10 +244,6 @@ export function normalizeQuestions(raw: unknown): Debile100Question[] {
         : normalizedChoices[0]?.id ?? base.correctChoiceId
     };
   });
-}
-
-export function isHintQuestion(index: number): boolean {
-  return index >= 5 && index <= 7;
 }
 
 export function getQuestionByIndex(

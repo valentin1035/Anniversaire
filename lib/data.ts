@@ -1384,7 +1384,7 @@ export async function claimDebile100Hint(eventId: string, playerId: string) {
   const row = statuses.find((entry) => entry.player_id === playerId);
   const progress = getDebile100PlayerProgress(playerId, row);
   if (!canUseHint(progress, state.current_question)) {
-    throw new Error("Tu as déjà utilisé ton indice (questions 5 à 7).");
+    throw new Error("Tu as déjà utilisé ton indice (questions 4 à 5).");
   }
   if (!shouldPlayerPlayQuestion(progress, state.current_question)) {
     throw new Error("Tu ne participes pas à cette question.");
@@ -1423,7 +1423,7 @@ export async function submitDebile100Pass(eventId: string, playerId: string) {
     throw new Error("Ce n'est pas le moment d'utiliser Passe.");
   }
   if (!isPassQuestion(state.current_question)) {
-    throw new Error("Passe disponible uniquement aux questions 12 à 14.");
+    throw new Error("Passe disponible uniquement aux questions 10 à 11.");
   }
   if (!canSubmitDebile100Answer(state.question_started_at, state.phase)) {
     throw new Error("Le temps est écoulé — trop tard.");
@@ -1433,7 +1433,7 @@ export async function submitDebile100Pass(eventId: string, playerId: string) {
   const row = statuses.find((entry) => entry.player_id === playerId);
   const progress = getDebile100PlayerProgress(playerId, row);
   if (!canUsePass(progress, state.current_question)) {
-    throw new Error("Tu as déjà utilisé Passe (questions 12 à 14).");
+    throw new Error("Tu as déjà utilisé Passe (questions 10 à 11).");
   }
   if (!shouldPlayerPlayQuestion(progress, state.current_question)) {
     throw new Error("Tu ne participes pas à cette question.");
@@ -1478,7 +1478,7 @@ export async function submitDebile100Pass(eventId: string, playerId: string) {
 }
 
 async function clearDebile100SkipBeforeQuestion(eventId: string, questionIndex: number) {
-  const skipToClear = questionIndex === 10 ? 9 : questionIndex === 12 ? 11 : null;
+  const skipToClear = questionIndex === 8 ? 7 : questionIndex === 10 ? 9 : null;
   if (!skipToClear) {
     return;
   }
@@ -1496,7 +1496,7 @@ async function clearDebile100SkipBeforeQuestion(eventId: string, questionIndex: 
   }
 }
 
-/** Assigne Q9/Q11 aux joueurs qui ont raté Q8/Q10 avant le lancement de la question. */
+/** Assigne Q7/Q9 aux joueurs qui ont raté Q6/Q8 avant le lancement de la question. */
 async function syncCatchupAssignmentsBeforeQuestion(eventId: string, questionIndex: number) {
   if (!shouldAssignCatchupOnQuestionStart(questionIndex)) {
     return;

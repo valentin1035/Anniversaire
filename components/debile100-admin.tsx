@@ -6,11 +6,11 @@ import {
   createDebile100Choices,
   DEBILE100_QUESTION_COUNT,
   DEBILE100_SYNC_GRACE_SECONDS,
-  isHintQuestion,
   type Debile100ChoiceCount,
   type Debile100OpenAnswerType,
   type Debile100Question
 } from "@/lib/debile100";
+import { isHintQuestion } from "@/lib/debile100-rules";
 import { Debile100AnswerRecap } from "@/components/debile100-answer-recap";
 import { Debile100Leaderboard } from "@/components/debile100-leaderboard";
 import { Debile100ReinstatePanel } from "@/components/debile100-reinstate-panel";
@@ -188,8 +188,8 @@ export function Debile100Admin({
         {formatLiveStatus()}).
       </p>
       <p className="subtitle debile100Hint">
-        Au lancement, {DEBILE100_SYNC_GRACE_SECONDS} s de synchro puis 30 s de chrono. Q5–7 : indice
-        (1× sur les 3 questions). Q8–11 : rattrapage (8↔9, 10↔11). Q12–14 : Passe (1× sur les 3).
+        Au lancement, {DEBILE100_SYNC_GRACE_SECONDS} s de synchro puis 30 s de chrono. Q4–5 : indice
+        (1×). Q6–9 : deuxième chance (6↔7, 8↔9). Q10–11 : Passe (1×). Q1–3 et Q12–14 : sans aide.
       </p>
 
       <section className="card">
@@ -210,7 +210,7 @@ export function Debile100Admin({
                   value={question.hint ?? ""}
                   disabled={pending}
                   rows={2}
-                  placeholder="Texte de l'indice (questions 5 à 7)"
+                  placeholder="Texte de l'indice (questions 4 à 5)"
                   onChange={(event) =>
                     updateQuestion(question.index, { hint: event.target.value })
                   }
