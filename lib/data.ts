@@ -296,6 +296,32 @@ export async function addScore(eventId: string, playerId: string, points: number
   return data;
 }
 
+export async function addPlayerBonusPoint(playerId: string) {
+  const supabase = getSupabaseAdminClient();
+  const { data: player, error: fetchError } = await supabase
+    .from("players")
+    .select("id,bonus_points")
+    .eq("id", playerId)
+    .maybeSingle<{ id: string; bonus_points: number }>();
+
+  if (fetchError) {
+    throw new Error(fetchError.message);
+  }
+  if (!player) {
+    throw new Error("Joueur introuvable.");
+  }
+
+  const nextBonus = (player.bonus_points ?? 0) + 1;
+  const { error } = await supabase
+    .from("players")
+    .update({ bonus_points: nextBonus })
+    .eq("id", playerId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
 export async function createMatch(eventId: string, playerAId: string, playerBId: string, scheduledAt?: string) {
   if (playerAId === playerBId) {
     throw new Error("Un joueur ne peut pas s'affronter lui-même.");

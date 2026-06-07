@@ -10,7 +10,8 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "simulate": "npx tsx scripts/simulate-competition.ts"
+    "simulate": "npx tsx scripts/simulate-competition.ts",
+    "reset-db": "npx tsx scripts/reset-database.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.8",

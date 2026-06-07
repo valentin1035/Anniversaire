@@ -6,9 +6,15 @@ create table if not exists public.players (
   id uuid primary key default gen_random_uuid(),
   pseudo text not null unique,
   secret_code_hash text not null,
+  bonus_points int not null default 0,
   created_at timestamptz not null default now(),
-  constraint players_pseudo_format check (pseudo ~ '^[a-zA-Z0-9_\- ]{3,20}$')
+  constraint players_pseudo_format check (pseudo ~ '^[a-zA-Z0-9_\- ]{3,20}$'),
+  constraint players_bonus_points_range check (bonus_points between 0 and 999)
 );
+
+alter table public.players add column if not exists bonus_points int not null default 0;
+alter table public.players drop constraint if exists players_bonus_points_range;
+alter table public.players add constraint players_bonus_points_range check (bonus_points between 0 and 999);
 
 -- Events
 create table if not exists public.events (
@@ -221,10 +227,10 @@ create or replace view public.global_ranking as
 select
   p.id as player_id,
   p.pseudo as pseudo,
-  coalesce(sum(s.points), 0)::int as total_points
+  (coalesce(sum(s.points), 0) + coalesce(p.bonus_points, 0))::int as total_points
 from public.players p
 left join public.scores s on s.player_id = p.id
-group by p.id, p.pseudo
+group by p.id, p.pseudo, p.bonus_points
 order by total_points desc, p.pseudo asc;
 
 -- Code secret = pseudo (pour comptes déjà créés avec l'ancien système)

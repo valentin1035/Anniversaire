@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getAdminSession } from "@/lib/auth";
-import { getAllMatches, getEvents, getPlayers } from "@/lib/data";
+import { getAllMatches, getEvents, getGlobalRanking, getPlayers } from "@/lib/data";
 import { getEventDisplayName } from "@/lib/event-labels";
 
 type AdminProps = {
@@ -34,7 +34,12 @@ export default async function AdminPage({ searchParams }: AdminProps) {
     );
   }
 
-  const [events, players, matches] = await Promise.all([getEvents(), getPlayers(), getAllMatches()]);
+  const [events, players, matches, ranking] = await Promise.all([
+    getEvents(),
+    getPlayers(),
+    getAllMatches(),
+    getGlobalRanking()
+  ]);
 
   return (
     <main className="grid" style={{ gap: 16 }}>
@@ -62,6 +67,37 @@ export default async function AdminPage({ searchParams }: AdminProps) {
             😂 Gérer 100% Débile
           </Link>
         </p>
+      </section>
+
+      <section className="card">
+        <h2>Bonus classement global (+1)</h2>
+        <p className="subtitle">
+          Ajoute 1 point bonus à un participant (hors épreuves, cumulé au classement global).
+        </p>
+        {players.length === 0 ? (
+          <p className="subtitle">Aucun joueur inscrit pour le moment.</p>
+        ) : (
+          <div className="adminBonusList">
+            {players.map((player) => {
+              const total = ranking.find((row) => row.player_id === player.id)?.total_points ?? 0;
+              return (
+                <form
+                  key={player.id}
+                  action="/api/admin/bonus"
+                  method="post"
+                  className="adminBonusRow"
+                >
+                  <input type="hidden" name="playerId" value={player.id} />
+                  <span className="adminBonusPseudo">{player.pseudo}</span>
+                  <span className="subtitle">{total} pt au global</span>
+                  <button type="submit" className="beerPongBtnSecondary">
+                    +1 pt
+                  </button>
+                </form>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       <section className="grid two">

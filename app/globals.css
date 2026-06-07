@@ -1865,6 +1865,28 @@ button.debile100Choice.debile100ChoiceSelected:disabled {
   margin-top: 2px;
 }
 
+.adminBonusList {
+  display: grid;
+  gap: 8px;
+}
+
+.adminBonusRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.adminBonusPseudo {
+  font-weight: 600;
+  min-width: 8rem;
+}
+
 @media (max-width: 640px) {
   .bracketTreeMain {
     grid-template-columns: 1fr;
